@@ -1,0 +1,183 @@
+<mxfile host="Electron" modified="2026-11-19T02:44:00.000Z" agent="Antigravity" version="21.6.8" type="device">
+  <diagram id="seq-action-validation" name="Sequence Diagram - Action Validation">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="950" background="#F8FAFC" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="&lt;b&gt;SEQUENCE DIAGRAM: IN-GAME ACTION VALIDATION &amp;amp; IDEMPOTENT RETRY&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontColor=#0F172A;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="180" y="20" width="800" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- LIFELINE 1: Player Client -->
+        <mxCell id="ll_client_head" value="&lt;b&gt;Player Client&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(:MobileClient)&lt;/font&gt;" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=1.5;fontFamily=Helvetica;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="120" y="80" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_client_line" value="" style="edgeStyle=none;dashed=1;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#94A3B8;" edge="1" source="ll_client_head" target="ll_client_end" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_client_end" value="" style="shape=rect;html=1;whiteSpace=wrap;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="205" y="880" width="10" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- LIFELINE 2: Node.js Socket Server -->
+        <mxCell id="ll_server_head" value="&lt;b&gt;Node.js Server&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(:SocketIOServer)&lt;/font&gt;" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#F1F5F9;strokeColor=#0F172A;strokeWidth=2;fontFamily=Helvetica;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="490" y="80" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_server_line" value="" style="edgeStyle=none;dashed=1;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#94A3B8;" edge="1" source="ll_server_head" target="ll_server_end" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_server_end" value="" style="shape=rect;html=1;whiteSpace=wrap;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="580" y="880" width="10" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- LIFELINE 3: Opponent Clients -->
+        <mxCell id="ll_opp_head" value="&lt;b&gt;Opponent Clients (1–3)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(:MobileClient)&lt;/font&gt;" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#ECFDF5;strokeColor=#10B981;strokeWidth=1.5;fontFamily=Helvetica;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="80" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_opp_line" value="" style="edgeStyle=none;dashed=1;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#94A3B8;" edge="1" source="ll_opp_head" target="ll_opp_end" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_opp_end" value="" style="shape=rect;html=1;whiteSpace=wrap;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="930" y="880" width="10" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1: User Tap -->
+        <mxCell id="m1" value="1. User taps Left / Right climbing zone" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#475569;strokeWidth=1.5;fontSize=10;fontColor=#334155;rounded=4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="160" as="sourcePoint" />
+            <mxPoint x="210" y="190" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="150" y="160" />
+              <mxPoint x="150" y="190" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ALT FRAGMENT: Tap Validation -->
+        <mxCell id="alt_tap" value="&lt;b&gt;alt&lt;/b&gt; [Input Evaluation against Obstacle]" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#F8FAFC;strokeColor=#64748B;strokeWidth=1.5;dashed=1;align=left;spacingLeft=10;verticalAlign=top;fontSize=11;fontColor=#334155;" vertex="1" parent="1">
+          <mxGeometry x="60" y="210" width="310" height="160" as="geometry" />
+        </mxCell>
+
+        <mxCell id="alt_correct" value="&lt;font color=&quot;#16A34A&quot;&gt;&lt;b&gt;[Correct Tap]:&lt;/b&gt;&lt;/font&gt;&lt;br&gt;Advance vertical height (+20m)&lt;br&gt;Increment score (+10 pts)&lt;br&gt;Trigger Haptics.impactLight()" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#0F172A;" vertex="1" parent="1">
+          <mxGeometry x="80" y="235" width="270" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="alt_line" value="" style="edgeStyle=none;dashed=1;html=1;endArrow=none;strokeWidth=1;strokeColor=#94A3B8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="295" as="sourcePoint" />
+            <mxPoint x="370" y="295" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="alt_wrong" value="&lt;font color=&quot;#DC2626&quot;&gt;&lt;b&gt;[Wrong Tap / Hazard Collide]:&lt;/b&gt;&lt;/font&gt;&lt;br&gt;Lock controls for 0.5s stun duration&lt;br&gt;Trigger Haptics.impactHeavy()" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#0F172A;" vertex="1" parent="1">
+          <mxGeometry x="80" y="305" width="270" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Message 2: Emit Player Input -->
+        <mxCell id="m2" value="2. emit: PLAYER_INPUT { actionId: &quot;evt_104&quot;, y: 240, score: 320, timestamp }" style="edgeStyle=none;html=1;strokeColor=#2563EB;strokeWidth=1.5;fontSize=11;fontColor=#1E3A8A;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="400" as="sourcePoint" />
+            <mxPoint x="580" y="400" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 3: Server Validates -->
+        <mxCell id="m3" value="3. Validate tick rate &amp;amp; physical limits&lt;br&gt;Check processedActions.has(&quot;evt_104&quot;) == false&lt;br&gt;processedActions.add(&quot;evt_104&quot;)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#475569;strokeWidth=1.5;fontSize=10;fontColor=#334155;rounded=4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="420" as="sourcePoint" />
+            <mxPoint x="585" y="465" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="635" y="420" />
+              <mxPoint x="635" y="465" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 4: Broadcast to opponents -->
+        <mxCell id="m4" value="4. broadcast: GAME_TICK { players: [{ id: &quot;p1&quot;, y: 240, score: 320 }] }" style="edgeStyle=none;html=1;strokeColor=#059669;strokeWidth=1.5;dashed=1;fontSize=11;fontColor=#065F46;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="490" as="sourcePoint" />
+            <mxPoint x="930" y="490" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- OPT FRAGMENT: Packet Drop & Idempotent Retry -->
+        <mxCell id="opt_frag" value="&lt;b&gt;opt&lt;/b&gt; [ACK Lost in Network / High Jitter Scenario]" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#FFFBEB;strokeColor=#F59E0B;strokeWidth=1.5;dashed=1;align=left;spacingLeft=10;verticalAlign=top;fontSize=11;fontColor=#B45309;" vertex="1" parent="1">
+          <mxGeometry x="100" y="525" width="870" height="300" as="geometry" />
+        </mxCell>
+
+        <!-- Dropped ACK Message -->
+        <mxCell id="m5_drop" value="5. emit: INPUT_ACK { actionId: &quot;evt_104&quot;, status: &quot;ACCEPTED&quot; }" style="edgeStyle=none;html=1;strokeColor=#DC2626;strokeWidth=1.5;dashed=1;fontSize=11;fontColor=#DC2626;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="580" y="565" as="sourcePoint" />
+            <mxPoint x="360" y="565" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- Red Cross showing packet lost -->
+        <mxCell id="cross_lost" value="&lt;b&gt;X&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;&quot;&gt;PACKET LOST&lt;/font&gt;" style="shape=rect;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontColor=#DC2626;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="320" y="545" width="80" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Retry Timer Timeout on Client -->
+        <mxCell id="m6_timeout" value="6. ACK Timeout (300ms) expires&lt;br&gt;Action evt_104 still pending in queue" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#B45309;strokeWidth=1.5;fontSize=10;fontColor=#B45309;rounded=4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="605" as="sourcePoint" />
+            <mxPoint x="210" y="640" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="150" y="605" />
+              <mxPoint x="150" y="640" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 7: Idempotent Retry -->
+        <mxCell id="m7_retry" value="7. RETRY: emit: PLAYER_INPUT { actionId: &quot;evt_104&quot;, y: 240, score: 320 } (Same Action ID)" style="edgeStyle=none;html=1;strokeColor=#D97706;strokeWidth=2;fontSize=11;fontColor=#B45309;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="670" as="sourcePoint" />
+            <mxPoint x="580" y="670" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 8: Idempotent Dedup Check -->
+        <mxCell id="m8_dedup" value="8. Check: processedActions.has(&quot;evt_104&quot;) == true!&lt;br&gt;&lt;font color=&quot;#16A34A&quot;&gt;&lt;b&gt;IDEMPOTENT HIT: Suppress duplicate move/physics&lt;/b&gt;&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#15803D;strokeWidth=1.5;fontSize=10;fontColor=#166534;rounded=4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="695" as="sourcePoint" />
+            <mxPoint x="585" y="735" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="645" y="695" />
+              <mxPoint x="645" y="735" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 9: Immediate Re-ACK -->
+        <mxCell id="m9_ack" value="9. Immediate Cached ACK: emit: INPUT_ACK { actionId: &quot;evt_104&quot;, status: &quot;ACCEPTED&quot; }" style="edgeStyle=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;fontSize=11;fontColor=#15803D;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="580" y="760" as="sourcePoint" />
+            <mxPoint x="210" y="760" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Message 10: Clear queue -->
+        <mxCell id="m10_clear" value="10. Client receives ACK&lt;br&gt;De-queues evt_104 with 0 penalty" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#475569;strokeWidth=1.5;fontSize=10;fontColor=#334155;rounded=4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="780" as="sourcePoint" />
+            <mxPoint x="210" y="810" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="150" y="780" />
+              <mxPoint x="150" y="810" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Bottom Status Banner -->
+        <mxCell id="bottom_banner" value="&lt;b&gt;Result: Guaranteed At-Least-Once Delivery with Exactly-Once Processing Semantics&lt;/b&gt;" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#F0FDF4;strokeColor=#22C55E;strokeWidth=1.5;fontSize=12;fontColor=#166534;rounded=8;align=center;" vertex="1" parent="1">
+          <mxGeometry x="150" y="845" width="790" height="35" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

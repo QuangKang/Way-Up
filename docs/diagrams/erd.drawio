@@ -1,0 +1,163 @@
+<mxfile host="Electron" modified="2026-11-19T02:46:00.000Z" agent="Antigravity" version="21.6.8" type="device">
+  <diagram id="erd-diagram" name="Entity-Relationship Diagram">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" background="#F8FAFC" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="&lt;b&gt;ENTITY-RELATIONSHIP DIAGRAM (ERD): VERTICAL CLIMBING MOBILE GAME&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontColor=#0F172A;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="180" y="25" width="800" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- CONTAINER 1: Local Storage Boundary (Expo SQLite) -->
+        <mxCell id="boundary_local" value="&lt;b&gt;LOCAL STORAGE BOUNDARY (Client: Expo SQLite &amp;amp; Secure Storage)&lt;/b&gt;" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=center;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;dashed=1;rounded=10;fontSize=13;fontColor=#1E3A8A;spacingTop=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="500" height="680" as="geometry" />
+        </mxCell>
+
+        <!-- CONTAINER 2: Server State Boundary (Node.js In-Memory State) -->
+        <mxCell id="boundary_server" value="&lt;b&gt;SERVER / IN-MEMORY ROOM STATE (Node.js &amp;amp; Socket.IO Server)&lt;/b&gt;" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=center;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;dashed=1;rounded=10;fontSize=13;fontColor=#0F172A;spacingTop=12;" vertex="1" parent="1">
+          <mxGeometry x="610" y="80" width="520" height="680" as="geometry" />
+        </mxCell>
+
+        <!-- TABLE 1: device_identity (SQLite) -->
+        <mxCell id="tbl_identity" value="&lt;b&gt;device_identity&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(Guest Authentication Profile)&lt;/font&gt;" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=40;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#1E3A8A;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="90" y="140" width="400" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="row_id_1" value="&lt;b&gt;uuid&lt;/b&gt; : TEXT [PK, RFC 4122 UUIDv4]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_identity">
+          <mxGeometry y="40" width="400" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="row_id_2" value="&lt;b&gt;display_name&lt;/b&gt; : TEXT [Default: &quot;Climber_XXXX&quot;]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_identity">
+          <mxGeometry y="68" width="400" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="row_id_3" value="&lt;b&gt;created_at&lt;/b&gt; : INTEGER [Unix Timestamp ms]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_identity">
+          <mxGeometry y="96" width="400" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="row_id_4" value="&lt;b&gt;last_active_at&lt;/b&gt; : INTEGER [Unix Timestamp ms]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_identity">
+          <mxGeometry y="124" width="400" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- TABLE 2: local_records (SQLite) -->
+        <mxCell id="tbl_records" value="&lt;b&gt;local_records&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(Offline Practice &amp;amp; History Scores)&lt;/font&gt;" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=40;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#1E3A8A;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="90" y="420" width="400" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_1" value="&lt;b&gt;id&lt;/b&gt; : TEXT [PK, Prefix: &quot;rec_&quot;]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="40" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_2" value="&lt;b&gt;player_id&lt;/b&gt; : TEXT [FK -&gt; device_identity.uuid]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#2563EB;" vertex="1" parent="tbl_records">
+          <mxGeometry y="66" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_3" value="&lt;b&gt;score&lt;/b&gt; : INTEGER [Total Climb Points]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="92" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_4" value="&lt;b&gt;peak_height&lt;/b&gt; : REAL [Max Vertical Metres Reached]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="118" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_5" value="&lt;b&gt;seed&lt;/b&gt; : INTEGER [32-bit PRNG Level Seed]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="144" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_6" value="&lt;b&gt;rank&lt;/b&gt; : INTEGER [Final Placement: 1..4]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="170" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_7" value="&lt;b&gt;duration_ms&lt;/b&gt; : INTEGER [Run Time Elapsed ms]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="196" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_8" value="&lt;b&gt;played_at&lt;/b&gt; : INTEGER [Timestamp ms]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_records">
+          <mxGeometry y="222" width="400" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rec_9" value="&lt;b&gt;sync_status&lt;/b&gt; : TEXT ['PENDING' | 'SYNCED']" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#15803D;" vertex="1" parent="tbl_records">
+          <mxGeometry y="248" width="400" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- TABLE 3: Room (Server In-Memory) -->
+        <mxCell id="tbl_room" value="&lt;b&gt;Room&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(Server Lobby &amp;amp; Match State)&lt;/font&gt;" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=40;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#475569;strokeWidth=1.5;fontColor=#0F172A;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="140" width="420" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_1" value="&lt;b&gt;room_code&lt;/b&gt; : VARCHAR(4) [PK, e.g. &quot;K7B9&quot;]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="40" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_2" value="&lt;b&gt;host_uuid&lt;/b&gt; : VARCHAR(36) [UUID of Lobby Creator]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="66" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_3" value="&lt;b&gt;random_seed&lt;/b&gt; : BIGINT [32-bit unsigned PRNG Seed]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#B45309;" vertex="1" parent="tbl_room">
+          <mxGeometry y="92" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_4" value="&lt;b&gt;status&lt;/b&gt; : VARCHAR ['LOBBY' | 'STARTING' | 'PLAYING' | 'GAME_OVER']" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="118" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_5" value="&lt;b&gt;created_at&lt;/b&gt; : BIGINT [Unix Timestamp ms]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="144" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_6" value="&lt;b&gt;started_at&lt;/b&gt; : BIGINT [Match Start Epoch ms, Nullable]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="170" width="420" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="row_room_7" value="&lt;b&gt;goal_height&lt;/b&gt; : INTEGER [Target Metres, Default: 1000]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room">
+          <mxGeometry y="196" width="420" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- TABLE 4: RoomPlayer (Server In-Memory) -->
+        <mxCell id="tbl_room_player" value="&lt;b&gt;RoomPlayer&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot;&gt;(Active Participant in Lobby/Match)&lt;/font&gt;" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=40;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#475569;strokeWidth=1.5;fontColor=#0F172A;fontSize=12;rounded=6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="440" width="420" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_1" value="&lt;b&gt;room_code&lt;/b&gt; : VARCHAR(4) [FK -&gt; Room.room_code]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#475569;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="40" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_2" value="&lt;b&gt;player_uuid&lt;/b&gt; : VARCHAR(36) [PK, Client Guest UUID]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="64" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_3" value="&lt;b&gt;display_name&lt;/b&gt; : VARCHAR(50) [Player Nickname]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="88" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_4" value="&lt;b&gt;color&lt;/b&gt; : VARCHAR(7) [Hex: #EF4444, #3B82F6, #10B981, #F59E0B]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="112" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_5" value="&lt;b&gt;is_ready&lt;/b&gt; : BOOLEAN [Player Readiness]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="136" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_6" value="&lt;b&gt;is_host&lt;/b&gt; : BOOLEAN [Lobby Ownership]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="160" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_7" value="&lt;b&gt;current_y&lt;/b&gt; : FLOAT [Current Vertical Climbing Position]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="184" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_8" value="&lt;b&gt;score&lt;/b&gt; : INTEGER [Real-time Match Points]" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="208" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="row_rp_9" value="&lt;b&gt;status&lt;/b&gt; : VARCHAR ['WAITING' | 'READY' | 'CLIMBING' | 'FALLEN' | 'FINISHED']" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;fontColor=#0F172A;" vertex="1" parent="tbl_room_player">
+          <mxGeometry y="232" width="420" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- RELATIONSHIP 1: device_identity 1 to 0..* local_records -->
+        <mxCell id="rel_local" value="&lt;b&gt;1&lt;/b&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;stores offline scores&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&lt;b&gt;0..*&lt;/b&gt;" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#2563EB;strokeWidth=2;fontSize=11;fontColor=#1E3A8A;endArrow=ERmany;startArrow=ERone;endFill=0;startFill=0;" edge="1" source="tbl_identity" target="tbl_records" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="290" y="340" />
+              <mxPoint x="290" y="420" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- RELATIONSHIP 2: Room 1 to 2..4 RoomPlayer -->
+        <mxCell id="rel_room_players" value="&lt;b&gt;1&lt;/b&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;hosts lobby roster&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&lt;b&gt;2..4&lt;/b&gt;" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#475569;strokeWidth=2;fontSize=11;fontColor=#334155;endArrow=ERmany;startArrow=ERone;endFill=0;startFill=0;" edge="1" source="tbl_room" target="tbl_room_player" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="870" y="380" />
+              <mxPoint x="870" y="440" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- VIRTUAL BOUNDARY CROSSING: device_identity -> RoomPlayer -->
+        <mxCell id="rel_cross_boundary" value="&lt;font color=&quot;#D97706&quot;&gt;&lt;b&gt;WebSocket JOIN_ROOM&lt;/b&gt;&lt;br&gt;device_identity.uuid maps to player_uuid&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#F59E0B;strokeWidth=2;dashed=1;fontSize=10;fontColor=#B45309;endArrow=open;endFill=0;labelBackgroundColor=#FFFFFF;" edge="1" source="tbl_identity" target="tbl_room_player" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="550" y="230" />
+              <mxPoint x="550" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

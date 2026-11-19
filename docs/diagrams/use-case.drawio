@@ -1,0 +1,119 @@
+<mxfile host="Electron" modified="2026-11-19T02:40:00.000Z" agent="Antigravity" version="21.6.8" type="device">
+  <diagram id="use-case-diagram" name="Use Case Diagram">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" background="#F8FAFC" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="&lt;b&gt;UML USE CASE DIAGRAM: VERTICAL CLIMBING MOBILE GAME&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontColor=#0F172A;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="280" y="25" width="600" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- System Boundary -->
+        <mxCell id="boundary" value="&lt;b&gt;System Boundary: Vertical Climbing Mobile Game&lt;/b&gt;" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=center;fillColor=#FFFFFF;strokeColor=#475569;strokeWidth=2;dashed=0;rounded=8;fontSize=14;fontColor=#334155;spacingTop=12;" vertex="1" parent="1">
+          <mxGeometry x="260" y="75" width="760" height="700" as="geometry" />
+        </mxCell>
+
+        <!-- Primary Actor: Player -->
+        <mxCell id="actor_player" value="&lt;b&gt;Player&lt;/b&gt;&lt;br&gt;(Mobile User)" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#E2E8F0;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;fontSize=13;fontColor=#0F172A;" vertex="1" parent="1">
+          <mxGeometry x="90" y="360" width="55" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- UC-01: Manage Guest Identity -->
+        <mxCell id="uc_01" value="&lt;b&gt;Manage Guest Identity&lt;/b&gt;&lt;br&gt;(UC-01)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;UUIDv4 Local Auth&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="120" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- UC-02A: Create Room -->
+        <mxCell id="uc_02a" value="&lt;b&gt;Create Room&lt;/b&gt;&lt;br&gt;(UC-02)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;Generate 4-Char Code&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="240" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- UC-02B: Join Room -->
+        <mxCell id="uc_02b" value="&lt;b&gt;Join Room&lt;/b&gt;&lt;br&gt;(UC-02)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;2-4 Player Lobby Roster&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="340" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- UC-03: Play Multiplayer -->
+        <mxCell id="uc_03" value="&lt;b&gt;Play Multiplayer&lt;/b&gt;&lt;br&gt;(UC-03)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;Real-time Vertical Climbing&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="470" width="190" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- UC-04: Play Solo Offline -->
+        <mxCell id="uc_04" value="&lt;b&gt;Play Solo Offline&lt;/b&gt;&lt;br&gt;(UC-04)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;Single Player Practice&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="590" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- UC-05: View Results -->
+        <mxCell id="uc_05" value="&lt;b&gt;View Results &amp;amp; Records&lt;/b&gt;&lt;br&gt;(UC-05)&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;Ranks, Scores &amp;amp; History&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontSize=12;fontFamily=Helvetica;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="320" y="685" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Included Use Cases (Subsystems) -->
+        <mxCell id="inc_seed" value="&lt;b&gt;Sync PRNG Seed&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;32-bit Mulberry32&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontSize=11;fontFamily=Helvetica;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="720" y="415" width="170" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="inc_validate" value="&lt;b&gt;Validate Tap Input&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;Left/Right Tap &amp;amp; 0.5s Stun&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontSize=11;fontFamily=Helvetica;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="720" y="525" width="170" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="inc_offline_rec" value="&lt;b&gt;Record Offline Score&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748B&quot; style=&quot;font-size:10px;&quot;&gt;local_records (SQLite)&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontSize=11;fontFamily=Helvetica;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="720" y="650" width="170" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Actor Associations -->
+        <mxCell id="edge_actor_01" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_01" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_actor_02a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_02a" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_actor_02b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_02b" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_actor_03" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_03" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_actor_04" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_04" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_actor_05" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeWidth=1.5;strokeColor=#1E293B;" edge="1" source="actor_player" target="uc_05" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- <<include>> Relationships -->
+        <mxCell id="rel_inc_seed" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#B45309;fontSize=11;fontColor=#B45309;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_03" target="inc_seed" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rel_inc_val_mp" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#B45309;fontSize=11;fontColor=#B45309;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_03" target="inc_validate" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rel_inc_val_solo" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#B45309;fontSize=11;fontColor=#B45309;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_04" target="inc_validate" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rel_inc_rec_solo" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#B45309;fontSize=11;fontColor=#B45309;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_04" target="inc_offline_rec" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rel_inc_auth_create" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#2563EB;fontSize=11;fontColor=#2563EB;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_02a" target="uc_01" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rel_inc_auth_join" value="&amp;lt;&amp;lt;include&amp;gt;&amp;gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;strokeWidth=1.5;strokeColor=#2563EB;fontSize=11;fontColor=#2563EB;labelBackgroundColor=#FFFFFF;" edge="1" source="uc_02b" target="uc_01" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
