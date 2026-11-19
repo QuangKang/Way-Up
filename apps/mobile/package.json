@@ -1,0 +1,31 @@
+{
+  "name": "@climb/mobile",
+  "version": "1.0.0",
+  "description": "4-player real-time vertical climbing mobile game client using Expo SDK and TypeScript",
+  "main": "App.tsx",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@climb/shared": "*",
+    "expo": "~52.0.0",
+    "expo-crypto": "~14.0.0",
+    "expo-haptics": "~14.0.0",
+    "expo-sqlite": "~15.0.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.6",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "~18.3.12",
+    "@types/react-native": "~0.73.0",
+    "typescript": "^5.4.5"
+  },
+  "private": true
+}

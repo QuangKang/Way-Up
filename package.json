@@ -1,0 +1,32 @@
+{
+  "name": "climb-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "4-player real-time vertical climbing mobile game TypeScript monorepo",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build:shared && npm run build:server",
+    "build:shared": "npm run build --workspace=@climb/shared",
+    "build:server": "npm run build --workspace=@climb/server",
+    "dev:server": "npm run dev --workspace=@climb/server",
+    "dev:mobile": "npm run start --workspace=@climb/mobile",
+    "typecheck": "npm run typecheck --workspace=@climb/shared && npm run typecheck --workspace=@climb/server && npm run typecheck --workspace=@climb/mobile",
+    "clean": "node -e \"const fs = require('fs'); ['packages/shared/dist', 'apps/server/dist', 'apps/mobile/.expo'].forEach(p => fs.rmSync(p, { recursive: true, force: true }))\""
+  },
+  "keywords": [
+    "monorepo",
+    "multiplayer",
+    "socketio",
+    "expo",
+    "react-native",
+    "typescript",
+    "mulberry32",
+    "prng",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}

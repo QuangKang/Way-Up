@@ -1,0 +1,106 @@
+# ==========================================
+# Root .gitignore for Vertical Climb Monorepo
+# ==========================================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build Outputs & Compilers
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Expo & React Native Metro Bundler
+.expo/
+.expo-shared/
+web-build/
+.metro-health-check*
+*.bundle
+*.map
+
+# Mobile Platform Native Artifacts (Bare / Prebuild)
+apps/mobile/android/
+apps/mobile/ios/
+*.apk
+*.aab
+*.ipa
+*.app
+Pods/
+*.xcworkspace
+*.xcuserdatad
+
+# Local SQLite databases (development)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test Coverage
+coverage/
+.nyc_output/
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows System Files
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# IDEs and Editors
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Scratch & Temporary
+tmp/
+temp/
