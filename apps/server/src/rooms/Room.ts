@@ -2,7 +2,6 @@ import {
   GAME_CONSTANTS,
   Player,
   PlayerColor,
-  PlayerStatus,
   RoomState,
   RoomStatus
 } from '@climb/shared';

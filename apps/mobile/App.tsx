@@ -52,7 +52,7 @@ export default function App(): React.JSX.Element {
     leaveRoom,
     clearError
   } = useMultiplayerLobby({
-    serverUrl: 'http://localhost:3001',
+    serverUrl: 'http://192.168.1.19:3001',
     playerId,
     playerName
   });
@@ -69,7 +69,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <StatusBar barStyle="light-content" />
 
       <ScrollView contentContainerStyle={styles.container}>
         {/* App Header */}

@@ -28,7 +28,7 @@
     },
     "plugins": [
       "expo-sqlite",
-      "expo-haptics"
+      "expo-status-bar"
     ]
   }
 }

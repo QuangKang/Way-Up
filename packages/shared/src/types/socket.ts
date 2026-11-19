@@ -1,4 +1,4 @@
-import { Obstacle, Player, PlayerColor, PlayerStatus, RoomState } from './game';
+import { PlayerColor, PlayerStatus, RoomState } from './game';
 
 /**
  * WebSocket Payload Contracts
