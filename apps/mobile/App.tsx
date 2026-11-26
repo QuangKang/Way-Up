@@ -5,23 +5,28 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
 import { DeviceIdentity } from '@climb/shared';
-import { getOrCreateDeviceIdentity } from './src/db/identityService';
+import {
+  getOrCreateDeviceIdentity,
+  updateNickname
+} from './src/db/identityService';
 import { useMultiplayerLobby } from './src/hooks/useMultiplayerLobby';
-import { LobbyView } from './src/components/LobbyView';
-import { OfflineRecordsView } from './src/components/OfflineRecordsView';
-import { DeterministicObstaclesView } from './src/components/DeterministicObstaclesView';
+import { LobbyScreen } from './src/screens/LobbyScreen';
+import { WaitingRoomScreen } from './src/screens/WaitingRoomScreen';
+import { GameScreen } from './src/screens/GameScreen';
+import { ResultsScreen } from './src/screens/ResultsScreen';
 import { HapticsService } from './src/haptics/hapticsService';
-
-type ActiveTab = 'LOBBY' | 'OBSTACLES' | 'OFFLINE_RECORDS';
 
 export default function App(): React.JSX.Element {
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
-  const [activeTab, setActiveTab] = useState<ActiveTab>('LOBBY');
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isEditingNickname, setIsEditingNickname] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState('');
+  const [nicknameError, setNicknameError] = useState<string | null>(null);
 
   // Initialize SQLite device identity on startup
   useEffect(() => {
@@ -29,6 +34,7 @@ export default function App(): React.JSX.Element {
       try {
         const id = await getOrCreateDeviceIdentity();
         setIdentity(id);
+        setNicknameDraft(id.nickname);
       } catch (err) {
         console.warn('Failed to initialize SQLite identity:', err);
       } finally {
@@ -44,45 +50,80 @@ export default function App(): React.JSX.Element {
   const {
     connectionState,
     roomState,
+    countdownSeconds,
     matchStartPayload,
+    livePlayers,
+    matchResult,
     error,
     joinOrCreateRoom,
     toggleReady,
     startMatch,
+    sendPlayerMove,
+    requestRematch,
     leaveRoom,
     clearError
   } = useMultiplayerLobby({
-    serverUrl: 'http://192.168.1.19:3001',
+    serverUrl: process.env.EXPO_PUBLIC_SERVER_URL ?? 'http://localhost:3001',
     playerId,
     playerName
   });
 
+  const handleSaveNickname = async () => {
+    const trimmed = nicknameDraft.trim();
+    if (!trimmed) {
+      setNicknameError('Nickname cannot be empty');
+      return;
+    }
+
+    try {
+      const updated = await updateNickname(trimmed);
+      setIdentity(updated);
+      setNicknameDraft(updated.nickname);
+      setNicknameError(null);
+      setIsEditingNickname(false);
+      void HapticsService.selection();
+    } catch (err) {
+      console.warn('Failed saving nickname to SQLite:', err);
+      setNicknameError('Could not save nickname');
+    }
+  };
+
   if (isInitializing) {
     return (
       <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" />
         <View style={styles.centered}>
-          <Text style={styles.loadingText}>Initializing SQLite & Device Identity...</Text>
+          <Text style={styles.loadingText}>
+            Initializing SQLite & Device Identity...
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  const isInRoom = roomState !== null;
+  const isConnected =
+    connectionState === 'CONNECTED' || connectionState === 'IN_ROOM';
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
 
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* App Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.appTitle}>VERTICAL CLIMB</Text>
+            <Text style={styles.appTitle}>WAY UP!</Text>
             <Text style={styles.appSubtitle}>4-Player Real-Time Climbing</Text>
           </View>
           <View style={styles.connectionBadge}>
             <View
               style={[
                 styles.statusDot,
-                connectionState === 'IN_ROOM' || connectionState === 'MATCH_STARTING'
+                connectionState === 'IN_ROOM'
                   ? styles.dotGreen
                   : connectionState === 'CONNECTED'
                   ? styles.dotBlue
@@ -93,19 +134,76 @@ export default function App(): React.JSX.Element {
           </View>
         </View>
 
-        {/* Guest Device Identity Banner (expo-sqlite) */}
+        {/* Guest Device Identity & Editable Nickname Card (SQLite-persisted) */}
         {identity && (
           <View style={styles.identityCard}>
             <View style={styles.identityRow}>
-              <Text style={styles.identityLabel}>GUEST UUIDv4 (SQLite):</Text>
+              <Text style={styles.identityLabel}>GUEST UUIDv4:</Text>
               <Text style={styles.identityValue} numberOfLines={1}>
                 {identity.guestUuid}
               </Text>
             </View>
-            <View style={styles.identityRow}>
+
+            <View style={styles.nicknameSection}>
               <Text style={styles.identityLabel}>NICKNAME:</Text>
-              <Text style={styles.identityNickname}>{identity.nickname}</Text>
+              {isEditingNickname ? (
+                <View style={styles.nicknameEditRow}>
+                  <TextInput
+                    style={styles.nicknameInput}
+                    value={nicknameDraft}
+                    onChangeText={setNicknameDraft}
+                    maxLength={20}
+                    autoFocus
+                    placeholder="Enter nickname"
+                    placeholderTextColor="#64748B"
+                    returnKeyType="done"
+                    onSubmitEditing={() => {
+                      void handleSaveNickname();
+                    }}
+                  />
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={() => {
+                      void handleSaveNickname();
+                    }}
+                  >
+                    <Text style={styles.saveBtnText}>Save</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => {
+                      setNicknameDraft(identity.nickname);
+                      setNicknameError(null);
+                      setIsEditingNickname(false);
+                    }}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.nicknameDisplayRow}>
+                  <Text style={styles.identityNickname}>
+                    {identity.nickname}
+                  </Text>
+                  {!isInRoom && (
+                    <TouchableOpacity
+                      style={styles.editNicknameBtn}
+                      onPress={() => {
+                        void HapticsService.selection();
+                        setNicknameDraft(identity.nickname);
+                        setIsEditingNickname(true);
+                      }}
+                    >
+                      <Text style={styles.editNicknameText}>Edit</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
             </View>
+
+            {nicknameError && (
+              <Text style={styles.nicknameErrorText}>{nicknameError}</Text>
+            )}
           </View>
         )}
 
@@ -117,91 +215,50 @@ export default function App(): React.JSX.Element {
           </TouchableOpacity>
         )}
 
-        {/* Match Started Banner */}
-        {matchStartPayload && (
-          <View style={styles.matchStartedCard}>
-            <Text style={styles.matchStartedTitle}>CLIMB IN PROGRESS!</Text>
-            <Text style={styles.matchStartedSub}>
-              Deterministic 32-bit Seed: 0x{matchStartPayload.seed.toString(16).toUpperCase()}
-            </Text>
-            <Text style={styles.matchStartedMeta}>
-              Goal Height: {matchStartPayload.climbGoalHeight}m
-            </Text>
-          </View>
-        )}
-
-        {/* Tab Navigation */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'LOBBY' && styles.tabButtonActive]}
-            onPress={() => {
-              void HapticsService.selection();
-              setActiveTab('LOBBY');
-            }}
-          >
-            <Text
-              style={[styles.tabText, activeTab === 'LOBBY' && styles.tabTextActive]}
-            >
-              Lobby
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'OBSTACLES' && styles.tabButtonActive]}
-            onPress={() => {
-              void HapticsService.selection();
-              setActiveTab('OBSTACLES');
-            }}
-          >
-            <Text
-              style={[styles.tabText, activeTab === 'OBSTACLES' && styles.tabTextActive]}
-            >
-              PRNG Obstacles
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.tabButton,
-              activeTab === 'OFFLINE_RECORDS' && styles.tabButtonActive
-            ]}
-            onPress={() => {
-              void HapticsService.selection();
-              setActiveTab('OFFLINE_RECORDS');
-            }}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'OFFLINE_RECORDS' && styles.tabTextActive
-              ]}
-            >
-              SQLite Scores
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Tab Content */}
-        {activeTab === 'LOBBY' && (
-          <LobbyView
-            roomState={roomState}
+        {/* Phase-Driven Screen Router */}
+        {!roomState && (
+          <LobbyScreen
             playerId={playerId}
             isConnecting={connectionState === 'CONNECTING'}
-            onJoinOrCreate={joinOrCreateRoom}
-            onToggleReady={toggleReady}
-            onStartMatch={startMatch}
+            isConnected={isConnected}
+            previewSeed={matchStartPayload?.seed ?? 424242}
+            onJoinOrCreateRoom={(code) =>
+              joinOrCreateRoom(code, identity?.nickname)
+            }
+          />
+        )}
+
+        {roomState &&
+          (roomState.phase === 'WAITING' ||
+            roomState.phase === 'COUNTDOWN') && (
+            <WaitingRoomScreen
+              roomState={roomState}
+              playerId={playerId}
+              countdownSeconds={countdownSeconds}
+              onToggleReady={toggleReady}
+              onStartMatch={startMatch}
+              onLeaveRoom={leaveRoom}
+            />
+          )}
+
+        {roomState && roomState.phase === 'PLAYING' && (
+          <GameScreen
+            roomState={roomState}
+            playerId={playerId}
+            livePlayers={livePlayers}
+            onSendMove={sendPlayerMove}
             onLeaveRoom={leaveRoom}
           />
         )}
 
-        {activeTab === 'OBSTACLES' && (
-          <DeterministicObstaclesView
-            initialSeed={matchStartPayload ? matchStartPayload.seed : 424242}
+        {roomState && roomState.phase === 'FINISHED' && (
+          <ResultsScreen
+            roomState={roomState}
+            matchResult={matchResult}
+            playerId={playerId}
+            onRematch={requestRematch}
+            onLeaveRoom={leaveRoom}
           />
-        )}
-
-        {activeTab === 'OFFLINE_RECORDS' && (
-          <OfflineRecordsView playerId={playerId} />
         )}
       </ScrollView>
     </SafeAreaView>
@@ -284,13 +341,17 @@ const styles = StyleSheet.create({
   identityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4
+    marginBottom: 8
+  },
+  nicknameSection: {
+    flexDirection: 'row',
+    alignItems: 'center'
   },
   identityLabel: {
     fontSize: 10,
     fontWeight: '700',
     color: '#64748B',
-    width: 140
+    width: 96
   },
   identityValue: {
     flex: 1,
@@ -298,10 +359,72 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: '#38BDF8'
   },
+  nicknameDisplayRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
   identityNickname: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
     color: '#F8FAFC'
+  },
+  editNicknameBtn: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6
+  },
+  editNicknameText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  nicknameEditRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  nicknameInput: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#38BDF8'
+  },
+  saveBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  cancelBtn: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6
+  },
+  cancelBtnText: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  nicknameErrorText: {
+    color: '#FCA5A5',
+    fontSize: 11,
+    marginTop: 6
   },
   errorBanner: {
     backgroundColor: '#7F1D1D',
@@ -323,54 +446,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     marginLeft: 10
-  },
-  matchStartedCard: {
-    backgroundColor: '#14532D',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#22C55E'
-  },
-  matchStartedTitle: {
-    color: '#4ADE80',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 1
-  },
-  matchStartedSub: {
-    color: '#BBF7D0',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 4
-  },
-  matchStartedMeta: {
-    color: '#86EFAC',
-    fontSize: 12,
-    marginTop: 2
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#1E293B',
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 16
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 8
-  },
-  tabButtonActive: {
-    backgroundColor: '#3B82F6'
-  },
-  tabText: {
-    color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  tabTextActive: {
-    color: '#FFFFFF'
   }
 });

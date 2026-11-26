@@ -65,11 +65,10 @@ export class RoomManager {
     playerName: string,
     requestedCode?: string
   ): { success: boolean; room?: Room; error?: string } {
-    // If player is already in a room, remove them first
-    this.leaveCurrentRoom(playerId);
+    const existingCode = this.playerRoomIndex.get(playerId);
 
     if (!requestedCode || requestedCode.trim() === '') {
-      // Create new 4-char room
+      this.leaveCurrentRoom(playerId);
       const room = this.createRoom(playerId, playerName);
       return { success: true, room };
     }
@@ -77,6 +76,10 @@ export class RoomManager {
     const normalizedCode = requestedCode.trim().toUpperCase();
     if (normalizedCode.length !== CONFIG.ROOM_CODE_LENGTH) {
       return { success: false, error: 'INVALID_ROOM_CODE' };
+    }
+
+    if (existingCode && existingCode !== normalizedCode) {
+      this.leaveCurrentRoom(playerId);
     }
 
     const existingRoom = this.rooms.get(normalizedCode);
@@ -98,6 +101,8 @@ export class RoomManager {
     wasHost?: boolean;
     newHostId?: string;
     roomDeleted?: boolean;
+    countdownAborted?: boolean;
+    shouldFinishMatch?: boolean;
   } {
     const code = this.playerRoomIndex.get(playerId);
     if (!code) return {};
@@ -106,20 +111,35 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return {};
 
-    const { wasHost, newHostId, isEmpty } = room.removePlayer(playerId);
+    const {
+      wasHost,
+      newHostId,
+      isEmpty,
+      countdownAborted,
+      shouldFinishMatch
+    } = room.removePlayer(playerId);
 
     if (isEmpty) {
+      room.dispose();
       this.rooms.delete(code);
       return { roomCode: code, wasHost, roomDeleted: true };
     }
 
-    return { roomCode: code, wasHost, newHostId, roomDeleted: false };
+    return {
+      roomCode: code,
+      wasHost,
+      newHostId,
+      roomDeleted: false,
+      countdownAborted,
+      shouldFinishMatch
+    };
   }
 
   public getActiveRoomsSummary(): Array<{
     code: string;
     playerCount: number;
     maxPlayers: number;
+    phase: string;
     status: string;
     hostId: string;
     createdAt: number;
@@ -128,6 +148,7 @@ export class RoomManager {
       code: room.code,
       playerCount: room.getPlayerCount(),
       maxPlayers: CONFIG.MAX_PLAYERS,
+      phase: room.phase,
       status: room.status,
       hostId: room.hostId,
       createdAt: room.createdAt

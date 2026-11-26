@@ -5,13 +5,22 @@ import {
   InterServerEvents,
   JoinRoomPayload,
   LeaveRoomPayload,
+  MatchFinishReason,
+  MatchRematchPayload,
+  MatchStartPayload,
   PingPayload,
+  PlayerInputPayload,
+  PlayerMovePayload,
+  PlayerReadyPayload,
+  RoomLeavePayload,
   RoomStartRequestPayload,
   ServerToClientEvents,
   SetReadyPayload,
   SocketData
 } from '@climb/shared';
+import { Room } from '../rooms/Room';
 import { RoomManager } from '../rooms/RoomManager';
+import { CONFIG } from '../config';
 
 export type GameSocket = Socket<
   ClientToServerEvents,
@@ -32,29 +41,44 @@ export function registerSocketHandlers(io: GameServer): void {
 
   io.on('connection', (socket: GameSocket) => {
     // -------------------------------------------------------------
-    // JOIN_ROOM
+    // JOIN_ROOM (Creates 4-char room when roomCode omitted, or joins)
     // -------------------------------------------------------------
     socket.on('JOIN_ROOM', (payload: JoinRoomPayload, callback) => {
-      const { playerId, playerName, roomCode } = payload;
+      const { playerId, roomCode } = payload;
+      const rawName = payload.nickname ?? payload.playerName;
 
-      if (!playerId || !playerName || playerName.trim() === '') {
+      if (!playerId || !rawName || rawName.trim() === '') {
         const error: ErrorPayload = {
           code: 'INTERNAL_ERROR',
-          message: 'Player ID and a non-empty name are required'
+          message: 'Player ID and a non-empty nickname are required'
         };
         socket.emit('ERROR', error);
         callback?.({ success: false, error });
         return;
       }
 
-      const trimmedName = playerName.trim();
-      const result = roomManager.joinOrCreateRoom(playerId, trimmedName, roomCode);
+      // If switching rooms on the same socket, leave previous Socket.IO room channel cleanly
+      const previousRoomCode = socket.data.roomCode;
+      if (
+        previousRoomCode &&
+        (!roomCode || previousRoomCode !== roomCode.trim().toUpperCase())
+      ) {
+        handlePlayerLeave(socket, playerId);
+      }
+
+      const trimmedName = rawName.trim().slice(0, 24);
+      const result = roomManager.joinOrCreateRoom(
+        playerId,
+        trimmedName,
+        roomCode
+      );
 
       if (!result.success || !result.room) {
-        const errorCode = (result.error as ErrorPayload['code']) || 'INTERNAL_ERROR';
+        const errorCode =
+          (result.error as ErrorPayload['code']) || 'INTERNAL_ERROR';
         const error: ErrorPayload = {
           code: errorCode,
-          message: `Failed to join room: ${result.error ?? 'Unknown error'}`
+          message: formatErrorMessage(errorCode)
         };
         socket.emit('ERROR', error);
         callback?.({ success: false, error });
@@ -73,108 +97,199 @@ export function registerSocketHandlers(io: GameServer): void {
         return;
       }
 
-      // Associate socket session data
       socket.data.playerId = playerId;
       socket.data.playerName = trimmedName;
       socket.data.roomCode = room.code;
 
-      // Join Socket.io room channel
       void socket.join(room.code);
 
+      const snapshot = room.toState();
       const joinedResponse = {
-        room: room.toState(),
+        room: snapshot,
         selfPlayerId: playerId,
         assignedColor: player.color
       };
 
-      // Notify caller
+      // Acknowledge the joining client
       socket.emit('ROOM_JOINED', joinedResponse);
       callback?.({ success: true, data: joinedResponse });
 
-      // Notify all other members of the room
-      socket.to(room.code).emit('ROOM_UPDATED', {
-        room: room.toState(),
+      // Broadcast full room snapshot to all clients in the room
+      io.to(room.code).emit('ROOM_UPDATED', {
+        room: snapshot,
         changeReason: 'PLAYER_JOINED'
       });
     });
 
     // -------------------------------------------------------------
-    // SET_READY
+    // player:ready & SET_READY
     // -------------------------------------------------------------
-    socket.on('SET_READY', (payload: SetReadyPayload) => {
-      const { playerId, roomCode, isReady } = payload;
-      const room = roomManager.getRoom(roomCode);
+    socket.on('player:ready', (payload: PlayerReadyPayload, callback) => {
+      const room = roomManager.getRoom(payload.roomCode);
+      if (!room) {
+        const error: ErrorPayload = {
+          code: 'ROOM_NOT_FOUND',
+          message: `Room ${payload.roomCode} not found`
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
 
+      const updated = room.setPlayerReady(payload.playerId, payload.isReady);
+      if (!updated) {
+        const error: ErrorPayload = {
+          code: 'INVALID_ROOM_PHASE',
+          message: 'Ready state can only be changed while waiting in the lobby'
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
+
+      const snapshot = room.toState();
+      io.to(room.code).emit('ROOM_UPDATED', {
+        room: snapshot,
+        changeReason: 'READY_CHANGED'
+      });
+      callback?.({ success: true, data: snapshot });
+    });
+
+    socket.on('SET_READY', (payload: SetReadyPayload) => {
+      const room = roomManager.getRoom(payload.roomCode);
       if (!room) {
         socket.emit('ERROR', {
           code: 'ROOM_NOT_FOUND',
-          message: `Room ${roomCode} not found`
+          message: `Room ${payload.roomCode} not found`
         });
         return;
       }
 
-      const updated = room.setPlayerReady(playerId, isReady);
-      if (!updated) {
+      if (room.setPlayerReady(payload.playerId, payload.isReady)) {
+        io.to(room.code).emit('ROOM_UPDATED', {
+          room: room.toState(),
+          changeReason: 'READY_CHANGED'
+        });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // match:start & ROOM_START
+    // -------------------------------------------------------------
+    socket.on('match:start', (payload: MatchStartPayload, callback) => {
+      const result = initiateRoomCountdown(
+        payload.roomCode,
+        payload.playerId,
+        payload.targetHeight
+      );
+      if (!result.success) {
+        socket.emit('ERROR', result.error!);
+        callback?.({ success: false, error: result.error });
         return;
       }
 
-      io.to(room.code).emit('ROOM_UPDATED', {
-        room: room.toState(),
-        changeReason: 'READY_CHANGED'
+      callback?.({ success: true, data: result.countdownPayload });
+    });
+
+    socket.on('ROOM_START', (payload: RoomStartRequestPayload, callback) => {
+      const result = initiateRoomCountdown(
+        payload.roomCode,
+        payload.playerId,
+        payload.targetHeight
+      );
+      if (!result.success || !result.countdownPayload) {
+        const error = result.error ?? {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to start room'
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
+
+      callback?.({
+        success: true,
+        data: {
+          roomCode: result.countdownPayload.roomCode,
+          seed: result.countdownPayload.seed,
+          countdownDurationMs: CONFIG.COUNTDOWN_DURATION_MS,
+          gameStartTime: Date.now() + CONFIG.COUNTDOWN_DURATION_MS,
+          climbGoalHeight: result.countdownPayload.targetHeight
+        }
       });
     });
 
     // -------------------------------------------------------------
-    // ROOM_START
+    // player:move & PLAYER_INPUT (Server-Authoritative Validation)
     // -------------------------------------------------------------
-    socket.on('ROOM_START', (payload: RoomStartRequestPayload, callback) => {
-      const { playerId, roomCode } = payload;
-      const room = roomManager.getRoom(roomCode);
+    socket.on('player:move', (payload: PlayerMovePayload) => {
+      handleAuthoritativeMove(payload);
+    });
 
-      if (!room) {
-        const error: ErrorPayload = {
-          code: 'ROOM_NOT_FOUND',
-          message: `Room ${roomCode} not found`
-        };
-        socket.emit('ERROR', error);
-        callback?.({ success: false, error });
-        return;
-      }
-
-      const check = room.canStart(playerId);
-      if (!check.canStart) {
-        const errorCode = (check.error as ErrorPayload['code']) || 'INTERNAL_ERROR';
-        const error: ErrorPayload = {
-          code: errorCode,
-          message: `Cannot start match: ${check.error}`
-        };
-        socket.emit('ERROR', error);
-        callback?.({ success: false, error });
-        return;
-      }
-
-      // Start match and obtain deterministic 32-bit seed
-      const startData = room.startRoom();
-
-      const broadcastPayload = {
-        roomCode: room.code,
-        seed: startData.seed,
-        countdownDurationMs: startData.countdownDurationMs,
-        gameStartTime: startData.gameStartTime,
-        climbGoalHeight: startData.climbGoalHeight
-      };
-
-      // Broadcast start to all clients in the room
-      io.to(room.code).emit('ROOM_START', broadcastPayload);
-      callback?.({ success: true, data: broadcastPayload });
+    socket.on('PLAYER_INPUT', (payload: PlayerInputPayload) => {
+      handleAuthoritativeMove({
+        roomCode: payload.roomCode,
+        playerId: payload.playerId,
+        x: payload.x,
+        height: payload.y,
+        action: payload.action === 'JUMP' ? 'JUMP' : 'IDLE',
+        sequenceNumber: payload.sequenceNumber,
+        clientTimestamp: payload.timestamp
+      });
     });
 
     // -------------------------------------------------------------
-    // LEAVE_ROOM
+    // match:rematch
     // -------------------------------------------------------------
+    socket.on('match:rematch', (payload: MatchRematchPayload, callback) => {
+      const room = roomManager.getRoom(payload.roomCode);
+      if (!room) {
+        const error: ErrorPayload = {
+          code: 'ROOM_NOT_FOUND',
+          message: `Room ${payload.roomCode} not found`
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
+
+      if (!room.hasPlayer(payload.playerId)) {
+        const error: ErrorPayload = {
+          code: 'UNAUTHORIZED_NOT_HOST',
+          message: 'Player is not a member of this room'
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
+
+      if (room.phase !== 'FINISHED') {
+        const error: ErrorPayload = {
+          code: 'INVALID_ROOM_PHASE',
+          message: 'Rematch is only available after the match has finished'
+        };
+        socket.emit('ERROR', error);
+        callback?.({ success: false, error });
+        return;
+      }
+
+      const snapshot = room.resetForRematch();
+      io.to(room.code).emit('ROOM_UPDATED', {
+        room: snapshot,
+        changeReason: 'REMATCH_RESET'
+      });
+      callback?.({ success: true, data: snapshot });
+    });
+
+    // -------------------------------------------------------------
+    // room:leave & LEAVE_ROOM
+    // -------------------------------------------------------------
+    socket.on('room:leave', (payload: RoomLeavePayload) => {
+      handlePlayerLeave(socket, payload.playerId);
+    });
+
     socket.on('LEAVE_ROOM', (payload: LeaveRoomPayload) => {
-      const { playerId } = payload;
-      handlePlayerLeave(socket, playerId);
+      handlePlayerLeave(socket, payload.playerId);
     });
 
     // -------------------------------------------------------------
@@ -198,22 +313,159 @@ export function registerSocketHandlers(io: GameServer): void {
     });
   });
 
+  function initiateRoomCountdown(
+    roomCode: string,
+    playerId: string,
+    targetHeight?: number
+  ) {
+    const room = roomManager.getRoom(roomCode);
+    if (!room) {
+      const error: ErrorPayload = {
+        code: 'ROOM_NOT_FOUND',
+        message: `Room ${roomCode} not found`
+      };
+      return { success: false as const, error };
+    }
+
+    const check = room.canStart(playerId);
+    if (!check.canStart) {
+      const errorCode =
+        (check.error as ErrorPayload['code']) || 'INTERNAL_ERROR';
+      const error: ErrorPayload = {
+        code: errorCode,
+        message: formatErrorMessage(errorCode)
+      };
+      return { success: false as const, error };
+    }
+
+    const countdownPayload = room.beginCountdown(
+      {
+        onTick: (tickPayload) => {
+          io.to(room.code).emit('match:countdown', tickPayload);
+          io.to(room.code).emit('ROOM_UPDATED', {
+            room: room.toState(),
+            changeReason:
+              tickPayload.secondsRemaining === CONFIG.COUNTDOWN_SECONDS
+                ? 'COUNTDOWN_STARTED'
+                : 'COUNTDOWN_TICK'
+          });
+        },
+        onStarted: (startedPayload) => {
+          io.to(room.code).emit('match:started', startedPayload);
+          io.to(room.code).emit('ROOM_START', {
+            roomCode: startedPayload.roomCode,
+            seed: startedPayload.seed,
+            countdownDurationMs: 0,
+            gameStartTime: startedPayload.startTimestamp,
+            climbGoalHeight: startedPayload.targetHeight
+          });
+          io.to(room.code).emit('ROOM_UPDATED', {
+            room: startedPayload.room,
+            changeReason: 'MATCH_STARTED'
+          });
+          // Broadcast initial sanitized player positions
+          io.to(room.code).emit('match:state', room.toMatchState());
+        },
+        onTimeLimit: () => {
+          concludeRoomMatch(room, 'TIME_LIMIT');
+        }
+      },
+      targetHeight
+    );
+
+    return { success: true as const, countdownPayload };
+  }
+
+  function handleAuthoritativeMove(payload: PlayerMovePayload): void {
+    const room = roomManager.getRoom(payload.roomCode);
+    if (!room || room.phase !== 'PLAYING') {
+      return;
+    }
+
+    const moveResult = room.applyPlayerMove(payload);
+    if (!moveResult.accepted) {
+      return;
+    }
+
+    if (moveResult.reachedTarget || moveResult.allFinished) {
+      const finishReason: MatchFinishReason = moveResult.allFinished
+        ? 'ALL_FINISHED'
+        : 'TARGET_REACHED';
+      concludeRoomMatch(room, finishReason);
+      return;
+    }
+
+    room.scheduleStateBroadcast((statePayload) => {
+      io.to(room.code).emit('match:state', statePayload);
+    });
+  }
+
+  function concludeRoomMatch(room: Room, reason: MatchFinishReason): void {
+    if (room.phase !== 'PLAYING') return;
+
+    // Flush final sanitized state before closing the match
+    const finalState = room.toMatchState();
+    const finishedPayload = room.finishMatch(reason);
+
+    io.to(room.code).emit('match:state', finalState);
+    io.to(room.code).emit('match:finished', finishedPayload);
+    io.to(room.code).emit('ROOM_UPDATED', {
+      room: finishedPayload.room,
+      changeReason: 'MATCH_FINISHED'
+    });
+  }
+
   function handlePlayerLeave(socket: GameSocket, playerId: string): void {
     const leaveResult = roomManager.leaveCurrentRoom(playerId);
     if (!leaveResult.roomCode) return;
 
     void socket.leave(leaveResult.roomCode);
+    if (socket.data.roomCode === leaveResult.roomCode) {
+      socket.data.roomCode = undefined;
+    }
 
     if (leaveResult.roomDeleted) {
       return;
     }
 
     const room = roomManager.getRoom(leaveResult.roomCode);
-    if (room) {
-      io.to(leaveResult.roomCode).emit('ROOM_UPDATED', {
-        room: room.toState(),
-        changeReason: leaveResult.wasHost ? 'HOST_TRANSFERRED' : 'PLAYER_LEFT'
-      });
+    if (!room) return;
+
+    if (leaveResult.shouldFinishMatch) {
+      concludeRoomMatch(room, 'ALL_FINISHED');
+      return;
     }
+
+    const reason = leaveResult.countdownAborted
+      ? 'COUNTDOWN_ABORTED'
+      : leaveResult.wasHost
+      ? 'HOST_TRANSFERRED'
+      : 'PLAYER_LEFT';
+
+    io.to(leaveResult.roomCode).emit('ROOM_UPDATED', {
+      room: room.toState(),
+      changeReason: reason
+    });
+  }
+}
+
+function formatErrorMessage(code: ErrorPayload['code']): string {
+  switch (code) {
+    case 'ROOM_NOT_FOUND':
+      return 'Room code not found. Double-check the 4-character code.';
+    case 'ROOM_FULL':
+      return 'This room is already full (4/4 climbers).';
+    case 'GAME_ALREADY_STARTED':
+      return 'Match is already in progress for this room.';
+    case 'NOT_ENOUGH_PLAYERS':
+      return 'At least 1 player is required to start.';
+    case 'NOT_ALL_PLAYERS_READY':
+      return 'All joined players must be Ready before starting.';
+    case 'UNAUTHORIZED_NOT_HOST':
+      return 'Only the room Host can start the match.';
+    case 'INVALID_ROOM_CODE':
+      return 'Room code must be 4 characters.';
+    default:
+      return `Action failed (${code})`;
   }
 }

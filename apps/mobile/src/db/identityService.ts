@@ -45,7 +45,6 @@ export async function getOrCreateDeviceIdentity(
   const now = Date.now();
 
   if (existing) {
-    // Update last active timestamp
     await db.runAsync(
       'UPDATE device_identity SET last_active_at = ? WHERE id = ?;',
       [now, existing.id]
@@ -60,10 +59,11 @@ export async function getOrCreateDeviceIdentity(
     };
   }
 
-  // Generate fresh guest identity
   const guestUuid = generateUUIDv4();
   const id = `identity_${guestUuid}`;
-  const nickname = suggestedNickname?.trim() || `Climber_${guestUuid.slice(0, 4).toUpperCase()}`;
+  const nickname =
+    suggestedNickname?.trim().slice(0, 20) ||
+    `Climber_${guestUuid.slice(0, 4).toUpperCase()}`;
 
   await db.runAsync(
     'INSERT INTO device_identity (id, guest_uuid, nickname, created_at, last_active_at) VALUES (?, ?, ?, ?, ?);',
@@ -80,17 +80,28 @@ export async function getOrCreateDeviceIdentity(
 }
 
 /**
- * Updates the guest player's nickname in SQLite.
+ * Updates the guest player's nickname in SQLite and returns the updated DeviceIdentity.
  */
-export async function updateNickname(newNickname: string): Promise<void> {
-  const db = await getDatabase();
-  const trimmed = newNickname.trim();
+export async function updateNickname(
+  newNickname: string
+): Promise<DeviceIdentity> {
+  const trimmed = newNickname.trim().slice(0, 20);
   if (!trimmed) {
     throw new Error('Nickname cannot be empty');
   }
 
+  const current = await getOrCreateDeviceIdentity();
+  const db = await getDatabase();
+  const now = Date.now();
+
   await db.runAsync(
-    'UPDATE device_identity SET nickname = ?, last_active_at = ?;',
-    [trimmed, Date.now()]
+    'UPDATE device_identity SET nickname = ?, last_active_at = ? WHERE id = ?;',
+    [trimmed, now, current.id]
   );
+
+  return {
+    ...current,
+    nickname: trimmed,
+    lastActiveAt: now
+  };
 }

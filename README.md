@@ -1,4 +1,4 @@
-# 🧗 Vertical Climb - 4-Player Real-Time Mobile Game
+# 🧗 Way Up! - 4-Player Real-Time Mobile Game
 
 A cross-platform real-time multiplayer vertical climbing mobile game built with **React Native (Expo SDK 58)**, a **Node.js + Express + Socket.IO** backend, and shared TypeScript contracts featuring a deterministic **Mulberry32 PRNG** engine.
 
@@ -17,7 +17,7 @@ This project is organized as a TypeScript **npm workspaces** monorepo:
 │   │   │   ├── db/          # expo-sqlite (device_identity & local_records)
 │   │   │   ├── haptics/     # expo-haptics tactile feedback service
 │   │   │   └── hooks/       # useMultiplayerLobby Socket.IO client hook
-│   │   ├── App.tsx          # Main Expo mobile application entry (backend URL configured here)
+│   │   ├── App.tsx          # Main Expo mobile application entry
 │   │   ├── app.json         # Expo project configuration (SDK 58)
 │   │   └── tsconfig.json    # Strict TypeScript configuration
 │   │
@@ -103,27 +103,25 @@ Physical mobile devices running Expo Go cannot reach `http://localhost:3001` on 
   ipconfig getifaddr en0
   ```
 
-### 2. Update Backend URL in `apps/mobile`
-Open [apps/mobile/App.tsx](file:///c:/Users/ADMIN/Downloads/Mobile%20Assignment/apps/mobile/App.tsx#L55) and update line 55 with your local IP:
+### 2. Configure Backend Server URL (`apps/mobile/.env`)
+Copy the template [apps/mobile/.env.example](file:///c:/Users/ADMIN/Downloads/Mobile%20Assignment/apps/mobile/.env.example) to `.env` inside `apps/mobile`:
 
-```tsx
-// apps/mobile/App.tsx (Line 55)
-const {
-  connectionState,
-  roomState,
-  matchStartPayload,
-  error,
-  joinOrCreateRoom,
-  toggleReady,
-  startMatch,
-  leaveRoom,
-  clearError
-} = useMultiplayerLobby({
-  serverUrl: 'http://<YOUR_LOCAL_IP>:3001', // e.g., 'http://192.168.1.19:3001'
-  playerId,
-  playerName
-});
+```bash
+# On Windows (PowerShell)
+Copy-Item apps/mobile/.env.example apps/mobile/.env
+
+# On macOS / Linux
+cp apps/mobile/.env.example apps/mobile/.env
 ```
+
+Open [apps/mobile/.env](file:///c:/Users/ADMIN/Downloads/Mobile%20Assignment/apps/mobile/.env) and replace `<YOUR_LAN_IP>` with your computer's local Wi-Fi IP address:
+
+```env
+EXPO_PUBLIC_SERVER_URL=http://<YOUR_LAN_IP>:3001
+```
+
+> [!NOTE]
+> `apps/mobile/App.tsx` reads `process.env.EXPO_PUBLIC_SERVER_URL ?? 'http://localhost:3001'`. Whenever you modify `apps/mobile/.env`, restart Expo with cache cleared (`npx expo start -c`) so Metro loads the updated environment variable without editing any source files.
 
 ### 3. Wi-Fi & Firewall Troubleshooting
 * **Same Wi-Fi Network**: Ensure your laptop and phone are connected to the exact same Wi-Fi router (disable VPNs and cellular data fallback).
