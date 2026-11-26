@@ -69,6 +69,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
               >
                 <Text
+                  numberOfLines={1}
                   style={[
                     styles.segmentText,
                     language === 'en' && styles.segmentTextActive
@@ -89,6 +90,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
               >
                 <Text
+                  numberOfLines={1}
                   style={[
                     styles.segmentText,
                     language === 'vi' && styles.segmentTextActive
@@ -243,6 +245,7 @@ const styles = StyleSheet.create({
   segmentPill: {
     flex: 1,
     paddingVertical: 9,
+    paddingHorizontal: 14,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center'
