@@ -1,155 +1,141 @@
 import React, { useEffect, useState } from 'react';
-import {
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
-} from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { LocalRecord } from '@climb/shared';
-import { getBestLocalRecords, saveLocalRecord } from '../db/scoreService';
-import { HapticsService } from '../haptics/hapticsService';
+import { getBestLocalRecords } from '../db/scoreService';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface OfflineRecordsViewProps {
   playerId: string;
 }
 
-export const OfflineRecordsView: React.FC<OfflineRecordsViewProps> = ({ playerId }) => {
+export const OfflineRecordsView: React.FC<OfflineRecordsViewProps> = ({
+  playerId
+}) => {
+  const { t } = useLanguage();
   const [records, setRecords] = useState<LocalRecord[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const loadRecords = async () => {
-    try {
-      setLoading(true);
-      const data = await getBestLocalRecords(5);
-      setRecords(data);
-    } catch (e) {
-      console.warn('Failed loading local SQLite records:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    void loadRecords();
-  }, []);
-
-  const handleRecordMockRun = async () => {
-    try {
-      void HapticsService.jump();
-      const mockScore = Math.floor(Math.random() * 850) + 150;
-      const mockHeight = parseFloat((mockScore * 1.25).toFixed(1));
-      const mockSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
-      const mockDuration = Math.floor(Math.random() * 45000) + 15000;
-
-      await saveLocalRecord({
-        playerId,
-        score: mockScore,
-        height: mockHeight,
-        seed: mockSeed,
-        durationMs: mockDuration
-      });
-
-      await HapticsService.victory();
-      await loadRecords();
-    } catch (err) {
-      console.error('Failed saving score to SQLite:', err);
+    let active = true;
+    async function loadRecords() {
+      try {
+        setLoading(true);
+        const data = await getBestLocalRecords(8);
+        if (active) {
+          setRecords(data);
+        }
+      } catch (e) {
+        console.warn('Failed loading local records:', e);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
     }
-  };
+    void loadRecords();
+    return () => {
+      active = false;
+    };
+  }, [playerId]);
+
+  if (records.length === 0) {
+    return (
+      <View style={styles.emptyContainer}>
+        <View style={styles.emptyPeakBadge}>
+          <Text style={styles.emptyPeakIcon}>🏆</Text>
+        </View>
+        <Text style={styles.emptyText}>
+          {loading ? t.recordsLoading : t.recordsEmptyTitle}
+        </Text>
+        <Text style={styles.emptySub}>{t.recordsEmptySub}</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.card}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Offline Scores (`local_records`)</Text>
-          <Text style={styles.subtitle}>Persistent SQLite Storage via expo-sqlite</Text>
-        </View>
-        <TouchableOpacity style={styles.smallButton} onPress={handleRecordMockRun}>
-          <Text style={styles.smallButtonText}>+ Add Run</Text>
-        </TouchableOpacity>
-      </View>
+    <View style={styles.recordList}>
+      {records.map((rec, index) => {
+        const rank = index + 1;
+        const durationSec =
+          rec.durationMs > 0 ? `${(rec.durationMs / 1000).toFixed(2)}s` : '—';
 
-      {records.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            {loading ? 'Reading SQLite database...' : 'No offline runs recorded yet.'}
-          </Text>
-          <Text style={styles.emptySub}>
-            Tap "+ Add Run" to record an offline climbing score into SQLite.
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.recordList}>
-          {records.map((rec, index) => (
-            <View key={rec.id} style={styles.recordItem}>
-              <View style={styles.rankBadge}>
-                <Text style={styles.rankText}>#{index + 1}</Text>
-              </View>
-              <View style={styles.recordDetails}>
-                <Text style={styles.scoreText}>{rec.score} pts</Text>
-                <Text style={styles.recordMeta}>
-                  Height: {rec.height}m • Seed: {rec.seed.toString(16).toUpperCase()}
-                </Text>
-              </View>
-              <View style={styles.syncBadge}>
-                <Text style={styles.syncText}>{rec.syncStatus}</Text>
-              </View>
+        return (
+          <View key={rec.id} style={styles.recordItem}>
+            <View
+              style={[
+                styles.rankBadge,
+                rank === 1 && styles.rankGold,
+                rank === 2 && styles.rankSilver,
+                rank === 3 && styles.rankBronze
+              ]}
+            >
+              <Text
+                style={[styles.rankText, rank <= 3 && styles.rankTextDark]}
+              >
+                #{rank}
+              </Text>
             </View>
-          ))}
-        </View>
-      )}
+
+            <View style={styles.recordDetails}>
+              <View style={styles.scoreRow}>
+                <Text style={styles.heightHighlight}>
+                  {Math.round(rec.height)}m
+                </Text>
+                <Text style={styles.scoreText}>{rec.score} pts</Text>
+              </View>
+              <Text style={styles.recordMeta}>
+                {t.recordsTimePrefix}: {durationSec} •{' '}
+                {rec.height >= 500
+                  ? t.recordsSummitConquered
+                  : t.recordsPartialAscent}
+              </Text>
+            </View>
+
+            <View style={styles.altitudeTag}>
+              <Text style={styles.altitudeTagText}>
+                {rec.height >= 500
+                  ? t.recordsPeakBadge
+                  : `${Math.round(rec.height)}m`}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155'
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#F8FAFC'
-  },
-  subtitle: {
-    fontSize: 12,
-    color: '#64748B'
-  },
-  smallButton: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8
-  },
-  smallButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 12
-  },
   emptyContainer: {
-    paddingVertical: 20,
+    paddingVertical: 28,
     alignItems: 'center'
   },
+  emptyPeakBadge: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#0B1424',
+    borderWidth: 1.5,
+    borderColor: '#2B456B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12
+  },
+  emptyPeakIcon: {
+    fontSize: 22
+  },
   emptyText: {
-    color: '#94A3B8',
-    fontSize: 14,
-    fontWeight: '600'
+    color: '#F1F5F9',
+    fontSize: 16,
+    fontWeight: '900'
   },
   emptySub: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 12,
-    marginTop: 4,
-    textAlign: 'center'
+    marginTop: 5,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 14
   },
   recordList: {
     gap: 8
@@ -157,46 +143,73 @@ const styles = StyleSheet.create({
   recordItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B1424',
     padding: 12,
-    borderRadius: 10
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1D314F'
   },
   rankBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#334155',
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12
   },
+  rankGold: {
+    backgroundColor: '#FACC15'
+  },
+  rankSilver: {
+    backgroundColor: '#CBD5E1'
+  },
+  rankBronze: {
+    backgroundColor: '#FB923C'
+  },
   rankText: {
     color: '#F8FAFC',
-    fontWeight: '800',
+    fontWeight: '900',
     fontSize: 13
+  },
+  rankTextDark: {
+    color: '#0F172A'
   },
   recordDetails: {
     flex: 1
   },
-  scoreText: {
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8
+  },
+  heightHighlight: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '900',
+    color: '#F8FAFC'
+  },
+  scoreText: {
+    fontSize: 13,
+    fontWeight: '800',
     color: '#38BDF8'
   },
   recordMeta: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 2
+    marginTop: 2,
+    fontWeight: '600'
   },
-  syncBadge: {
-    backgroundColor: '#064E3B',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4
+  altitudeTag: {
+    backgroundColor: '#162640',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#294266'
   },
-  syncText: {
-    color: '#34D399',
+  altitudeTagText: {
+    color: '#FBBF24',
     fontSize: 10,
-    fontWeight: '700'
+    fontWeight: '900'
   }
 });

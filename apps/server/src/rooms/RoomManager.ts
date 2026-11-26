@@ -39,12 +39,15 @@ export class RoomManager {
     return code;
   }
 
-  public createRoom(hostPlayerId: string, hostPlayerName: string): Room {
-    // If the host is in an existing room, leave it first
+  public createRoom(
+    hostPlayerId: string,
+    hostPlayerName: string,
+    preferredColor?: string
+  ): Room {
     this.leaveCurrentRoom(hostPlayerId);
 
     const code = this.generateRoomCode();
-    const room = new Room(code, hostPlayerId, hostPlayerName);
+    const room = new Room(code, hostPlayerId, hostPlayerName, preferredColor);
     this.rooms.set(code, room);
     this.playerRoomIndex.set(hostPlayerId, code);
     return room;
@@ -63,14 +66,14 @@ export class RoomManager {
   public joinOrCreateRoom(
     playerId: string,
     playerName: string,
-    requestedCode?: string
+    requestedCode?: string,
+    preferredColor?: string
   ): { success: boolean; room?: Room; error?: string } {
-    // If player is already in a room, remove them first
-    this.leaveCurrentRoom(playerId);
+    const existingCode = this.playerRoomIndex.get(playerId);
 
     if (!requestedCode || requestedCode.trim() === '') {
-      // Create new 4-char room
-      const room = this.createRoom(playerId, playerName);
+      this.leaveCurrentRoom(playerId);
+      const room = this.createRoom(playerId, playerName, preferredColor);
       return { success: true, room };
     }
 
@@ -79,12 +82,20 @@ export class RoomManager {
       return { success: false, error: 'INVALID_ROOM_CODE' };
     }
 
+    if (existingCode && existingCode !== normalizedCode) {
+      this.leaveCurrentRoom(playerId);
+    }
+
     const existingRoom = this.rooms.get(normalizedCode);
     if (!existingRoom) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
 
-    const joinResult = existingRoom.addPlayer(playerId, playerName);
+    const joinResult = existingRoom.addPlayer(
+      playerId,
+      playerName,
+      preferredColor
+    );
     if (!joinResult.success) {
       return { success: false, error: joinResult.error };
     }
@@ -98,6 +109,8 @@ export class RoomManager {
     wasHost?: boolean;
     newHostId?: string;
     roomDeleted?: boolean;
+    countdownAborted?: boolean;
+    shouldFinishMatch?: boolean;
   } {
     const code = this.playerRoomIndex.get(playerId);
     if (!code) return {};
@@ -106,20 +119,35 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return {};
 
-    const { wasHost, newHostId, isEmpty } = room.removePlayer(playerId);
+    const {
+      wasHost,
+      newHostId,
+      isEmpty,
+      countdownAborted,
+      shouldFinishMatch
+    } = room.removePlayer(playerId);
 
     if (isEmpty) {
+      room.dispose();
       this.rooms.delete(code);
       return { roomCode: code, wasHost, roomDeleted: true };
     }
 
-    return { roomCode: code, wasHost, newHostId, roomDeleted: false };
+    return {
+      roomCode: code,
+      wasHost,
+      newHostId,
+      roomDeleted: false,
+      countdownAborted,
+      shouldFinishMatch
+    };
   }
 
   public getActiveRoomsSummary(): Array<{
     code: string;
     playerCount: number;
     maxPlayers: number;
+    phase: string;
     status: string;
     hostId: string;
     createdAt: number;
@@ -128,6 +156,7 @@ export class RoomManager {
       code: room.code,
       playerCount: room.getPlayerCount(),
       maxPlayers: CONFIG.MAX_PLAYERS,
+      phase: room.phase,
       status: room.status,
       hostId: room.hostId,
       createdAt: room.createdAt

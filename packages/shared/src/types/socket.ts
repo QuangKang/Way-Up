@@ -1,4 +1,10 @@
-import { PlayerColor, PlayerStatus, RoomState } from './game';
+import {
+  MatchConfig,
+  MatchSettings,
+  PlayerMoveAction,
+  PlayerStatus,
+  RoomState
+} from './game';
 
 /**
  * WebSocket Payload Contracts
@@ -7,12 +13,22 @@ import { PlayerColor, PlayerStatus, RoomState } from './game';
 export interface JoinRoomPayload {
   roomCode?: string; // If omitted, the server generates a new 4-character room
   playerName: string;
+  nickname?: string;
   playerId: string; // Device/Guest UUID
+  preferredColor?: string;
 }
 
-export interface LeaveRoomPayload {
+export interface RoomLeavePayload {
   roomCode: string;
   playerId: string;
+}
+
+export type LeaveRoomPayload = RoomLeavePayload;
+
+export interface PlayerReadyPayload {
+  roomCode: string;
+  playerId: string;
+  isReady?: boolean; // If omitted, toggles current ready state
 }
 
 export interface SetReadyPayload {
@@ -21,9 +37,98 @@ export interface SetReadyPayload {
   isReady: boolean;
 }
 
-export interface RoomStartRequestPayload {
+export interface UpdateRoomSettingsPayload {
+  roomCode: string;
+  playerId: string; // Must be room host
+  settings: Partial<MatchSettings>;
+}
+
+export interface SelectPlayerColorPayload {
+  roomCode: string;
+  playerId: string;
+  color: string;
+}
+
+export interface MatchStartPayload {
   roomCode: string;
   playerId: string; // Must be the room host
+  targetHeight?: number;
+}
+
+export type RoomStartRequestPayload = MatchStartPayload;
+
+export interface MatchCountdownPayload {
+  roomCode: string;
+  secondsRemaining: number; // 3, 2, 1
+  seed: number;
+  targetHeight: number;
+}
+
+export interface MatchStartedPayload {
+  roomCode: string;
+  seed: number;
+  targetHeight: number;
+  startTimestamp: number;
+  config: MatchConfig;
+  room: RoomState;
+}
+
+export interface PlayerMovePayload {
+  roomCode: string;
+  playerId: string;
+  x: number;
+  height: number;
+  action: PlayerMoveAction;
+  status?: PlayerStatus;
+  sequenceNumber?: number;
+  clientTimestamp: number;
+}
+
+export interface SanitizedPlayerPosition {
+  id: string;
+  nickname: string;
+  color: string;
+  x: number;
+  height: number;
+  status: PlayerStatus;
+  finishTimeMs: number | null;
+}
+
+export interface MatchStatePayload {
+  roomCode: string;
+  serverTimestamp: number;
+  elapsedMs: number;
+  remainingMs?: number;
+  players: SanitizedPlayerPosition[];
+}
+
+export interface MatchRankingEntry {
+  rank: number;
+  playerId: string;
+  nickname: string;
+  color: string;
+  height: number;
+  score: number;
+  status: PlayerStatus;
+  finishTimeMs: number | null;
+}
+
+export type MatchFinishReason = 'TARGET_REACHED' | 'ALL_FINISHED' | 'TIME_LIMIT';
+
+export interface MatchFinishedPayload {
+  roomCode: string;
+  winnerId: string | null;
+  seed: number;
+  targetHeight: number;
+  durationMs: number;
+  reason: MatchFinishReason;
+  rankings: MatchRankingEntry[];
+  room: RoomState;
+}
+
+export interface MatchRematchPayload {
+  roomCode: string;
+  playerId: string;
 }
 
 export interface PlayerInputPayload {
@@ -43,12 +148,28 @@ export interface PingPayload {
 export interface RoomJoinedPayload {
   room: RoomState;
   selfPlayerId: string;
-  assignedColor: PlayerColor;
+  assignedColor: string;
 }
+
+export type RoomUpdateReason =
+  | 'PLAYER_JOINED'
+  | 'PLAYER_LEFT'
+  | 'READY_CHANGED'
+  | 'SETTINGS_UPDATED'
+  | 'COLOR_CHANGED'
+  | 'PLAYER_FINISHED'
+  | 'HOST_TRANSFERRED'
+  | 'COUNTDOWN_STARTED'
+  | 'COUNTDOWN_TICK'
+  | 'COUNTDOWN_ABORTED'
+  | 'MATCH_STARTED'
+  | 'MATCH_FINISHED'
+  | 'REMATCH_RESET'
+  | 'NICKNAME_UPDATED';
 
 export interface RoomUpdatedPayload {
   room: RoomState;
-  changeReason: 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'READY_CHANGED' | 'HOST_TRANSFERRED';
+  changeReason: RoomUpdateReason;
 }
 
 export interface RoomStartBroadcastPayload {
@@ -95,7 +216,11 @@ export interface ErrorPayload {
     | 'NOT_ENOUGH_PLAYERS'
     | 'NOT_ALL_PLAYERS_READY'
     | 'UNAUTHORIZED_NOT_HOST'
+    | 'COLOR_ALREADY_TAKEN'
+    | 'INVALID_COLOR'
     | 'INVALID_ROOM_CODE'
+    | 'INVALID_ROOM_PHASE'
+    | 'INVALID_MOVE'
     | 'INTERNAL_ERROR';
   message: string;
 }
@@ -127,6 +252,30 @@ export interface ClientToServerEvents {
   ) => void;
   PLAYER_INPUT: (payload: PlayerInputPayload) => void;
   PING: (payload: PingPayload) => void;
+
+  // Waiting Room, Customization & Authoritative Match Lifecycle Events
+  'player:ready': (
+    payload: PlayerReadyPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
+  'room:update_settings': (
+    payload: UpdateRoomSettingsPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
+  'player:select_color': (
+    payload: SelectPlayerColorPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
+  'room:leave': (payload: RoomLeavePayload) => void;
+  'match:start': (
+    payload: MatchStartPayload,
+    callback?: (response: SocketResponse<MatchCountdownPayload>) => void
+  ) => void;
+  'player:move': (payload: PlayerMovePayload) => void;
+  'match:rematch': (
+    payload: MatchRematchPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
 }
 
 export interface ServerToClientEvents {
@@ -137,6 +286,12 @@ export interface ServerToClientEvents {
   GAME_OVER: (payload: GameOverPayload) => void;
   ERROR: (payload: ErrorPayload) => void;
   PONG: (payload: PongPayload) => void;
+
+  // Waiting Room & Authoritative Match Lifecycle Events
+  'match:countdown': (payload: MatchCountdownPayload) => void;
+  'match:started': (payload: MatchStartedPayload) => void;
+  'match:state': (payload: MatchStatePayload) => void;
+  'match:finished': (payload: MatchFinishedPayload) => void;
 }
 
 export interface InterServerEvents {
