@@ -10,26 +10,39 @@ import {
 } from 'react-native';
 import {
   ClimbStep,
+  createMulberry32,
   evaluateHazardPhase,
   evaluateSummitBlizzard,
   GAME_CONSTANTS,
   generateMountainSteps,
   getBiomeForHeight,
+  MatchFinishedPayload,
+  MatchRankingEntry,
   MountainBiome,
+  PlayerColor,
   PlayerMoveAction,
   PlayerStatus,
   RoomState,
   SanitizedPlayerPosition,
   TapDirection
 } from '@climb/shared';
+import {
+  BoulderSprite,
+  SNOWY_ICE_HOLD_WIDTH,
+  SNOWY_ROCK_HOLD_WIDTH,
+  SnowyIceHold,
+  SnowyRockHold
+} from '../components/MountainArtwork';
 import { MoveSubmission } from '../hooks/useMultiplayerLobby';
 import { HapticsService } from '../haptics/hapticsService';
 
 export interface GameScreenProps {
+  mode?: 'ONLINE' | 'OFFLINE';
   roomState: RoomState;
   playerId: string;
   livePlayers: SanitizedPlayerPosition[];
   onSendMove: (move: MoveSubmission) => void;
+  onOfflineFinish?: (result: MatchFinishedPayload) => void;
   onLeaveRoom: () => void;
 }
 
@@ -57,7 +70,6 @@ interface SnowStreak {
   speedX: number;
   speedY: number;
   width: number;
-  height: number;
 }
 
 interface RivalGhost {
@@ -71,6 +83,45 @@ interface RivalGhost {
   status: PlayerStatus;
 }
 
+/**
+ * Decoupled boulder instance committed to `activeBouldersRef`.
+ * Once triggered in a lane, it NEVER cancels or despawns early regardless of how
+ * fast the climber moves up or down the cliff.
+ */
+interface ActiveBoulder {
+  id: string;
+  lane: TapDirection;
+  laneX: number;
+  phase: 'WARNING' | 'FALLING';
+  elapsedSec: number;
+  warningDurationSec: number;
+  fallDurationSec: number;
+  screenY: number;
+  spinDeg: number;
+  hitPlayer: boolean;
+  hitBotIds: Set<string>;
+}
+
+interface OfflineBotRuntime {
+  id: string;
+  nickname: string;
+  color: PlayerColor;
+  stepIndex: number;
+  visualX: number;
+  visualHeight: number;
+  hop: HopAnimation | null;
+  decisionTimer: number;
+  slipElapsed: number;
+  stunTimer: number;
+  status: PlayerStatus;
+  finishTimeMs: number | null;
+  score: number;
+  minTapDelay: number;
+  maxTapDelay: number;
+  cautionProb: number;
+  mistakeProb: number;
+}
+
 interface ClimbRuntimeState {
   stepIndex: number;
   visualX: number;
@@ -81,24 +132,62 @@ interface ClimbRuntimeState {
   lockTimer: number;
   boulderInvulnTimer: number;
   status: PlayerStatus;
+  finishTimeMs: number | null;
+  offlineFinishDelaySec: number;
+  offlineFinishDispatched: boolean;
   toast: FloatingToast | null;
   animClock: number;
   finishedEmitted: boolean;
 }
 
-const WORLD_WIDTH = GAME_CONSTANTS.WORLD_WIDTH; // 400
-const SLIP_LIMIT_SEC = 0.75; // 0.75s timed grip before sliding back 2 steps
-const SLIP_LOCK_SEC = 0.3;
-const BOULDER_STUN_SEC = 0.45;
-const BOULDER_INVULN_SEC = 1.15;
+interface CliffFacetSpec {
+  id: number;
+  leftPct: number;
+  baseOffsetPx: number;
+  widthPct: number;
+  heightPx: number;
+  rotateDeg: string;
+  hasSnowPatch: boolean;
+  isCrack: boolean;
+}
 
-// Closer Camera FOV: 120px per 10m step -> 4 to 5 ledges visible on screen
+const WORLD_WIDTH = GAME_CONSTANTS.WORLD_WIDTH; // 400
+const SLIP_LIMIT_SEC = 0.75; // 0.75s timed grip before sliding back 2 steps (-20m)
+const SLIP_LOCK_SEC = 0.3;
+const BOULDER_WARNING_SEC = 1.0; // ~1.0s pulsing top-edge warning before drop
+const BOULDER_STUN_SEC = 0.45;
+const BOULDER_INVULN_SEC = 1.05;
+
+// Closer Camera FOV: 120px per 10m step -> 4 to 5 holds visible on screen
 const PIXELS_PER_METER = 12.0;
 const BOTTOM_ANCHOR_RATIO = 0.23;
-const HOLD_WIDTH_PX = 104;
-const HOLD_HEIGHT_PX = 24;
 const BOULDER_SIZE_PX = 48;
 const MOVE_EMIT_INTERVAL_MS = 55;
+const CLIFF_TILE_PERIOD_PX = 760;
+
+// Deterministic tiling rock facets, fissures & clung snow patches (keeps 50% seam clear)
+const CLIFF_FACETS: readonly CliffFacetSpec[] = [
+  { id: 0, leftPct: 8, baseOffsetPx: 30, widthPct: 28, heightPx: 38, rotateDeg: '-7deg', hasSnowPatch: true, isCrack: false },
+  { id: 1, leftPct: 62, baseOffsetPx: 85, widthPct: 29, heightPx: 42, rotateDeg: '6deg', hasSnowPatch: true, isCrack: false },
+  { id: 2, leftPct: 16, baseOffsetPx: 145, widthPct: 22, heightPx: 30, rotateDeg: '9deg', hasSnowPatch: false, isCrack: false },
+  { id: 3, leftPct: 66, baseOffsetPx: 205, widthPct: 24, heightPx: 34, rotateDeg: '-8deg', hasSnowPatch: true, isCrack: false },
+  { id: 4, leftPct: 9, baseOffsetPx: 268, widthPct: 27, heightPx: 40, rotateDeg: '-5deg', hasSnowPatch: true, isCrack: false },
+  { id: 5, leftPct: 60, baseOffsetPx: 325, widthPct: 30, heightPx: 36, rotateDeg: '7deg', hasSnowPatch: false, isCrack: false },
+  { id: 6, leftPct: 13, baseOffsetPx: 392, widthPct: 25, heightPx: 36, rotateDeg: '8deg', hasSnowPatch: true, isCrack: false },
+  { id: 7, leftPct: 64, baseOffsetPx: 455, widthPct: 27, heightPx: 42, rotateDeg: '-6deg', hasSnowPatch: true, isCrack: false },
+  { id: 8, leftPct: 10, baseOffsetPx: 525, widthPct: 28, heightPx: 34, rotateDeg: '-9deg', hasSnowPatch: false, isCrack: false },
+  { id: 9, leftPct: 61, baseOffsetPx: 590, widthPct: 28, heightPx: 38, rotateDeg: '5deg', hasSnowPatch: true, isCrack: false },
+  { id: 10, leftPct: 15, baseOffsetPx: 658, widthPct: 24, heightPx: 34, rotateDeg: '6deg', hasSnowPatch: true, isCrack: false },
+  { id: 11, leftPct: 65, baseOffsetPx: 715, widthPct: 25, heightPx: 32, rotateDeg: '-7deg', hasSnowPatch: true, isCrack: false },
+  // Angular rock fissure cracks
+  { id: 12, leftPct: 28, baseOffsetPx: 105, widthPct: 2, heightPx: 44, rotateDeg: '24deg', hasSnowPatch: false, isCrack: true },
+  { id: 13, leftPct: 72, baseOffsetPx: 240, widthPct: 2, heightPx: 48, rotateDeg: '-22deg', hasSnowPatch: false, isCrack: true },
+  { id: 14, leftPct: 24, baseOffsetPx: 430, widthPct: 2, heightPx: 40, rotateDeg: '-26deg', hasSnowPatch: false, isCrack: true },
+  { id: 15, leftPct: 75, baseOffsetPx: 560, widthPct: 2, heightPx: 46, rotateDeg: '20deg', hasSnowPatch: false, isCrack: true },
+  { id: 16, leftPct: 31, baseOffsetPx: 690, widthPct: 2, heightPx: 38, rotateDeg: '19deg', hasSnowPatch: false, isCrack: true }
+];
+
+const EDGE_CRAGS = [0, 1, 2, 3, 4, 5, 6] as const;
 
 interface BiomePalette {
   name: string;
@@ -109,8 +198,10 @@ interface BiomePalette {
   cliffEdge: string;
   cliffSeam: string;
   rockPatch: string;
+  rockCragEdge: string;
+  fissureColor: string;
   graniteBody: string;
-  graniteTop: string;
+  graniteLight: string;
   graniteShadow: string;
   pillBg: string;
   pillText: string;
@@ -119,47 +210,53 @@ interface BiomePalette {
 const BIOME_PALETTES: Record<MountainBiome, BiomePalette> = {
   FOOTHILLS: {
     name: 'Rocky Foothills',
-    skyBg: '#221A2E',
-    farPeakColor: '#312542',
-    midPeakColor: '#261F33',
-    cliffFace: '#3A3335',
-    cliffEdge: '#574C4F',
-    cliffSeam: '#262123',
-    rockPatch: '#463E40',
-    graniteBody: '#6B6360',
-    graniteTop: '#D6D3D1',
-    graniteShadow: '#292524',
-    pillBg: 'rgba(120, 53, 15, 0.75)',
+    skyBg: '#192236',
+    farPeakColor: '#25324D',
+    midPeakColor: '#1E2940',
+    cliffFace: '#313B4D',
+    cliffEdge: '#526077',
+    cliffSeam: '#1D2432',
+    rockPatch: '#3E4A60',
+    rockCragEdge: '#273040',
+    fissureColor: '#1B2230',
+    graniteBody: '#3E4C63',
+    graniteLight: '#596B87',
+    graniteShadow: '#1E293B',
+    pillBg: 'rgba(30, 58, 95, 0.82)',
     pillText: '#FDE68A'
   },
   CLIFFS: {
     name: 'Steep Cliffs',
-    skyBg: '#0E1E38',
-    farPeakColor: '#172E52',
-    midPeakColor: '#122442',
-    cliffFace: '#273449',
-    cliffEdge: '#475569',
-    cliffSeam: '#182232',
-    rockPatch: '#334155',
-    graniteBody: '#475569',
-    graniteTop: '#E2E8F0',
-    graniteShadow: '#0F172A',
-    pillBg: 'rgba(12, 74, 110, 0.78)',
+    skyBg: '#0E1C36',
+    farPeakColor: '#182F54',
+    midPeakColor: '#132544',
+    cliffFace: '#27364F',
+    cliffEdge: '#5B708F',
+    cliffSeam: '#152033',
+    rockPatch: '#344766',
+    rockCragEdge: '#1D2B42',
+    fissureColor: '#111B2B',
+    graniteBody: '#384A66',
+    graniteLight: '#556D91',
+    graniteShadow: '#162133',
+    pillBg: 'rgba(12, 74, 110, 0.82)',
     pillText: '#BAE6FD'
   },
   SUMMIT: {
     name: 'Alpine Summit',
-    skyBg: '#060E21',
-    farPeakColor: '#132747',
-    midPeakColor: '#0D1D38',
-    cliffFace: '#1E2D45',
-    cliffEdge: '#64748B',
-    cliffSeam: '#111B2E',
-    rockPatch: '#293B59',
-    graniteBody: '#3B4D6B',
-    graniteTop: '#F8FAFC', // Snow-draped granite shelf
-    graniteShadow: '#091120',
-    pillBg: 'rgba(22, 78, 99, 0.85)',
+    skyBg: '#071024',
+    farPeakColor: '#14294D',
+    midPeakColor: '#0E1F3D',
+    cliffFace: '#22334F',
+    cliffEdge: '#7890B2',
+    cliffSeam: '#111C2E',
+    rockPatch: '#31476B',
+    rockCragEdge: '#1A2840',
+    fissureColor: '#0E1726',
+    graniteBody: '#364968',
+    graniteLight: '#5D769E',
+    graniteShadow: '#111B2E',
+    pillBg: 'rgba(22, 78, 99, 0.88)',
     pillText: '#E0F2FE'
   }
 };
@@ -171,9 +268,71 @@ function createSnowStreaks(): SnowStreak[] {
     yPct: (i * 29 + 13) % 100,
     speedX: 28 + (i % 5) * 14,
     speedY: 16 + (i % 4) * 6,
-    width: i % 3 === 0 ? 28 : 14,
-    height: i % 3 === 0 ? 3 : 4
+    width: i % 3 === 0 ? 28 : 15
   }));
+}
+
+function createInitialOfflineBots(seed: number): OfflineBotRuntime[] {
+  const rng = createMulberry32(seed ^ 0x85ebca6b);
+  return [
+    {
+      id: 'ai-bot-frost',
+      nickname: 'FrostBot',
+      color: '#EF4444',
+      stepIndex: 0,
+      visualX: 0.5,
+      visualHeight: 0,
+      hop: null,
+      decisionTimer: rng.nextFloat(0.28, 0.45),
+      slipElapsed: 0,
+      stunTimer: 0,
+      status: 'CLIMBING',
+      finishTimeMs: null,
+      score: 0,
+      minTapDelay: 0.33,
+      maxTapDelay: 0.44,
+      cautionProb: 0.92,
+      mistakeProb: 0.025
+    },
+    {
+      id: 'ai-bot-crag',
+      nickname: 'CragHopper',
+      color: '#10B981',
+      stepIndex: 0,
+      visualX: 0.5,
+      visualHeight: 0,
+      hop: null,
+      decisionTimer: rng.nextFloat(0.18, 0.32),
+      slipElapsed: 0,
+      stunTimer: 0,
+      status: 'CLIMBING',
+      finishTimeMs: null,
+      score: 0,
+      minTapDelay: 0.22,
+      maxTapDelay: 0.32,
+      cautionProb: 0.68,
+      mistakeProb: 0.055
+    },
+    {
+      id: 'ai-bot-peak',
+      nickname: 'PeakRunner',
+      color: '#F59E0B',
+      stepIndex: 0,
+      visualX: 0.5,
+      visualHeight: 0,
+      hop: null,
+      decisionTimer: rng.nextFloat(0.22, 0.38),
+      slipElapsed: 0,
+      stunTimer: 0,
+      status: 'CLIMBING',
+      finishTimeMs: null,
+      score: 0,
+      minTapDelay: 0.27,
+      maxTapDelay: 0.37,
+      cautionProb: 0.84,
+      mistakeProb: 0.038
+    }
+  ];
 }
 
 function formatTimer(elapsedMs: number): string {
@@ -194,10 +353,6 @@ interface ClimberAvatarProps {
   isGhost?: boolean;
 }
 
-/**
- * Stylized layered mountaineer character built from pure React Native Views:
- * helmet/beanie, ski goggles, backpack, puffer jacket, and animated limbs.
- */
 const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
   jacketColor,
   reachLeft,
@@ -211,15 +366,12 @@ const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
 
   return (
     <View style={[styles.climberRoot, isGhost && styles.climberGhostRoot]}>
-      {/* Backpack */}
       <View
         style={[
           styles.climberPack,
           reachLeft ? styles.packRight : styles.packLeft
         ]}
       />
-
-      {/* Arms */}
       <View
         style={[
           styles.climberArm,
@@ -236,8 +388,6 @@ const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
           rightArmUp && styles.armRaisedRight
         ]}
       />
-
-      {/* Helmet / Beanie + Head + Ski Goggles */}
       <View style={styles.climberHead}>
         <View
           style={[styles.climberHelmet, { backgroundColor: activeJacket }]}
@@ -246,15 +396,11 @@ const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
           <View style={styles.goggleGlint} />
         </View>
       </View>
-
-      {/* Jacket Torso + Harness */}
       <View
         style={[styles.climberTorso, { backgroundColor: activeJacket }]}
       >
         <View style={styles.climberHarness} />
       </View>
-
-      {/* Climbing Boots / Legs */}
       <View style={styles.climberLegsRow}>
         <View
           style={[
@@ -274,12 +420,15 @@ const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
 };
 
 export const GameScreen: React.FC<GameScreenProps> = ({
+  mode = 'ONLINE',
   roomState,
   playerId,
   livePlayers,
   onSendMove,
+  onOfflineFinish,
   onLeaveRoom
 }) => {
+  const isOffline = mode === 'OFFLINE';
   const windowDims = Dimensions.get('window');
   const [viewport, setViewport] = useState<{ width: number; height: number }>({
     width: Math.max(300, windowDims.width - 24),
@@ -298,7 +447,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   );
 
   const selfPlayer = roomState.players.find((p) => p.id === playerId);
-  const selfColor = selfPlayer?.color ?? '#38BDF8';
+  const selfColor = selfPlayer?.color ?? '#3B82F6';
+  const selfNickname = selfPlayer?.nickname ?? 'Climber';
 
   const gameRef = useRef<ClimbRuntimeState>({
     stepIndex: 0,
@@ -310,16 +460,31 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     lockTimer: 0,
     boulderInvulnTimer: 0,
     status: 'CLIMBING',
+    finishTimeMs: null,
+    offlineFinishDelaySec: 0,
+    offlineFinishDispatched: false,
     toast: null,
     animClock: 0,
     finishedEmitted: false
   });
+
+  // Decoupled boulder queue (never canceled when player climbs past trigger step)
+  const activeBouldersRef = useRef<ActiveBoulder[]>([]);
+  const spawnedBoulderKeysRef = useRef<Set<string>>(new Set());
+  const proximityTriggeredStepsRef = useRef<Set<number>>(new Set());
+  const boulderSeqRef = useRef<number>(0);
+
+  // Offline AI bots & deterministic bot PRNG
+  const offlineBotsRef = useRef<OfflineBotRuntime[]>([]);
+  const botPrngRef = useRef(createMulberry32(roomState.seed ^ 0x9e3779b9));
 
   const snowRef = useRef<SnowStreak[]>(createSnowStreaks());
   const rivalGhostsRef = useRef<Map<string, RivalGhost>>(new Map());
   const viewportRef = useRef(viewport);
 
   const onSendMoveRef = useRef(onSendMove);
+  const onOfflineFinishRef = useRef(onOfflineFinish);
+  const roomStateRef = useRef(roomState);
   const matchStartLocalMsRef = useRef<number>(Date.now());
   const elapsedMsRef = useRef<number>(0);
   const lastEmitMsRef = useRef<number>(0);
@@ -333,6 +498,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   useEffect(() => {
     onSendMoveRef.current = onSendMove;
   }, [onSendMove]);
+
+  useEffect(() => {
+    onOfflineFinishRef.current = onOfflineFinish;
+  }, [onOfflineFinish]);
+
+  useEffect(() => {
+    roomStateRef.current = roomState;
+  }, [roomState]);
 
   useEffect(() => {
     viewportRef.current = viewport;
@@ -351,18 +524,52 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       lockTimer: 0,
       boulderInvulnTimer: 0,
       status: 'CLIMBING',
+      finishTimeMs: null,
+      offlineFinishDelaySec: 0,
+      offlineFinishDispatched: false,
       toast: null,
       animClock: 0,
       finishedEmitted: false
     };
+    activeBouldersRef.current = [];
+    spawnedBoulderKeysRef.current.clear();
+    proximityTriggeredStepsRef.current.clear();
+    boulderSeqRef.current = 0;
+
     matchStartLocalMsRef.current = Date.now();
     elapsedMsRef.current = 0;
     lastEmitMsRef.current = 0;
     pendingMoveRef.current = null;
-  }, [steps]);
 
-  // Sync incoming 20Hz `match:state` rival positions for 60fps ghost interpolation
+    if (isOffline) {
+      botPrngRef.current = createMulberry32(roomState.seed ^ 0x9e3779b9);
+      const bots = createInitialOfflineBots(roomState.seed);
+      offlineBotsRef.current = bots;
+
+      const ghostMap = new Map<string, RivalGhost>();
+      for (const bot of bots) {
+        ghostMap.set(bot.id, {
+          id: bot.id,
+          nickname: bot.nickname,
+          color: bot.color,
+          xNorm: 0.5,
+          height: 0,
+          targetXNorm: 0.5,
+          targetHeight: 0,
+          status: 'CLIMBING'
+        });
+      }
+      rivalGhostsRef.current = ghostMap;
+    } else {
+      offlineBotsRef.current = [];
+      rivalGhostsRef.current.clear();
+    }
+  }, [isOffline, roomState.seed, steps]);
+
+  // Sync incoming 20Hz `match:state` rival positions in Online mode
   useEffect(() => {
+    if (isOffline) return;
+
     const map = rivalGhostsRef.current;
     const activeIds = new Set<string>();
 
@@ -396,7 +603,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         map.delete(id);
       }
     }
-  }, [livePlayers, playerId]);
+  }, [isOffline, livePlayers, playerId]);
 
   const queueOrEmitMove = useCallback(
     (
@@ -406,6 +613,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       status: PlayerStatus,
       immediate: boolean
     ) => {
+      if (isOffline) return;
+
       const g = gameRef.current;
       if (g.finishedEmitted) return;
 
@@ -437,7 +646,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         pendingMoveRef.current = payload;
       }
     },
-    [roomState.targetHeight]
+    [isOffline, roomState.targetHeight]
   );
 
   const triggerBoulderHit = useCallback(
@@ -462,7 +671,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         isFall: true
       };
       g.toast = {
-        text: '🪨 ROCKFALL HIT! -30m',
+        text: '🪨 BOULDER HIT! -30m',
         accent: '#FCA5A5',
         ttl: 1.0
       };
@@ -488,7 +697,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       const currentStep = steps[g.stepIndex]!;
 
-      // 1. Wrong-side tap -> whiff toward wrong lane & fall back 2 steps (-20m, clamped to 0)
+      // 1. Wrong-side tap -> whiff toward wrong lane & fall back 2 steps (-20m)
       if (side !== nextStep.requiredTap) {
         const destIndex = Math.max(0, g.stepIndex - 2);
         const destStep = steps[destIndex]!;
@@ -526,8 +735,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       }
 
       // 2. Correct-side tap -> advance +10m onto `nextStep`
-      // (Note: GUST_OF_WIND has zero knockback/stun — it is purely a cosmetic summit blizzard!
-      //  Full-screen FALLING_ROCK collision is checked dynamically against live boulder Y in the 60fps loop.)
       const prevBiome = currentStep.biome;
       g.stepIndex = nextStep.index;
       g.slipElapsed = 0;
@@ -556,7 +763,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         side === 'LEFT' ? 'TAP_LEFT' : 'TAP_RIGHT';
 
       if (nextStep.height >= roomState.targetHeight) {
+        const finishMs = Math.max(1, Date.now() - matchStartLocalMsRef.current);
         g.status = 'FINISHED';
+        g.finishTimeMs = finishMs;
+        g.offlineFinishDelaySec = 0.42;
         g.toast = {
           text: '🚩 SUMMIT CONQUERED!',
           accent: '#FEF08A',
@@ -592,10 +802,32 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   }, []);
 
-  // 60fps Game Loop: Hop Interpolation, Slippery Grip Timer, Full-Lane Boulders & Blizzard
+  // 60fps Game Loop: Climber, Non-Canceling Boulders, Offline AI Bots & Blizzard
   useEffect(() => {
     let rafId: number | null = null;
     let lastFrameTime: number | null = null;
+
+    const commitBoulderInLane = (step: ClimbStep) => {
+      const laneAlreadyBusy = activeBouldersRef.current.some(
+        (b) => b.lane === step.requiredTap
+      );
+      if (laneAlreadyBusy) return;
+
+      boulderSeqRef.current += 1;
+      activeBouldersRef.current.push({
+        id: `boulder-${step.index}-${boulderSeqRef.current}`,
+        lane: step.requiredTap,
+        laneX: step.x,
+        phase: 'WARNING',
+        elapsedSec: 0,
+        warningDurationSec: BOULDER_WARNING_SEC,
+        fallDurationSec: (step.activeDurationMs ?? 1080) / 1000,
+        screenY: -60,
+        spinDeg: 0,
+        hitPlayer: false,
+        hitBotIds: new Set<string>()
+      });
+    };
 
     const tick = (frameNow: number) => {
       const rawDt =
@@ -610,8 +842,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       const g = gameRef.current;
       g.animClock = (g.animClock + dt) % 3600;
 
-      // Flush trailing throttled network move
+      // Flush trailing throttled network move (Online mode)
       if (
+        !isOffline &&
         pendingMoveRef.current &&
         nowWallMs - lastEmitMsRef.current >= MOVE_EMIT_INTERVAL_MS
       ) {
@@ -639,7 +872,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         }
       }
 
-      // Interpolate climber hop / fall arc
+      // Interpolate local climber hop / fall arc
       const currentStep = steps[g.stepIndex]!;
       if (g.hop) {
         g.hop.elapsed += dt;
@@ -663,7 +896,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         g.visualHeight = currentStep.height;
       }
 
-      // Slippery Ledge timed grip-slip (~0.75s; ledge stays intact on cliff!)
+      // Slippery Ice Hold timed grip-slip (~0.75s; hold never breaks or disappears)
       if (
         currentStep.type === 'SLIPPERY_LEDGE' &&
         g.status !== 'FINISHED' &&
@@ -674,7 +907,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         if (g.slipElapsed >= SLIP_LIMIT_SEC) {
           const destIndex = Math.max(0, g.stepIndex - 2);
           const destStep = steps[destIndex]!;
-          const isMoss = currentStep.biome === 'FOOTHILLS';
 
           g.stepIndex = destIndex;
           g.slipElapsed = 0;
@@ -690,8 +922,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             isFall: true
           };
           g.toast = {
-            text: isMoss ? '🌿 MOSS SLIP! -20m' : '🧊 ICY SLIP! -20m',
-            accent: isMoss ? '#BEF264' : '#7DD3FC',
+            text: '🧊 ICY SLIP! -20m',
+            accent: '#7DD3FC',
             ttl: 0.85
           };
 
@@ -710,46 +942,375 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       const targetCam = Math.max(0, g.visualHeight - 3);
       g.cameraHeight += (targetCam - g.cameraHeight) * Math.min(1, dt * 10);
 
-      // Full-Screen Lane Falling Boulder live overlap collision check
       const playH = viewportRef.current.height;
       const anchorY = playH * (1 - BOTTOM_ANCHOR_RATIO);
       const climberCenterY =
         anchorY - (g.visualHeight - g.cameraHeight) * PIXELS_PER_METER - 22;
 
-      if (
-        g.status !== 'FINISHED' &&
-        g.boulderInvulnTimer <= 0 &&
-        g.stepIndex > 0 &&
-        !g.hop?.isFall
-      ) {
-        const minScan = Math.max(1, g.stepIndex - 1);
-        const maxScan = Math.min(steps.length - 1, g.stepIndex + 4);
+      // 1. Spawn new boulders into `activeBouldersRef` when approaching/cycling FALLING_ROCK steps
+      const minScan = Math.max(1, g.stepIndex - 1);
+      const maxScan = Math.min(steps.length - 1, g.stepIndex + 4);
+      for (let idx = minScan; idx <= maxScan; idx++) {
+        const st = steps[idx]!;
+        if (st.type !== 'FALLING_ROCK') continue;
 
-        for (let idx = minScan; idx <= maxScan; idx++) {
-          const st = steps[idx]!;
-          if (st.type !== 'FALLING_ROCK') continue;
+        const cycleMs = st.cycleMs ?? 3000;
+        const offsetMs = st.phaseOffsetMs ?? 0;
+        const cycleIdx = Math.floor(Math.max(0, elapsedMs + offsetMs) / cycleMs);
+        const cycleKey = `${st.index}:${cycleIdx}`;
 
-          const hz = evaluateHazardPhase(st, elapsedMs);
-          if (hz.phase !== 'ACTIVE') continue;
+        // Immediate proximity trigger on first approach so speed-climbers never skip rockfalls
+        if (
+          !proximityTriggeredStepsRef.current.has(st.index) &&
+          g.stepIndex >= st.index - 2 &&
+          g.stepIndex <= st.index
+        ) {
+          proximityTriggeredStepsRef.current.add(st.index);
+          spawnedBoulderKeysRef.current.add(cycleKey);
+          commitBoulderInLane(st);
+          continue;
+        }
 
-          const boulderCenterY =
-            -60 + hz.phaseProgress * (playH + 120);
-          const boulderLaneX = st.x; // 0.25 or 0.75
-          const sameLane = Math.abs(g.visualX - boulderLaneX) < 0.19;
-          const verticalHit = Math.abs(climberCenterY - boulderCenterY) < 36;
-
-          if (sameLane && verticalHit) {
-            triggerBoulderHit(g.visualX, g.visualHeight);
-            break;
-          }
+        const hz = evaluateHazardPhase(st, elapsedMs);
+        if (
+          hz.phase === 'WARNING' &&
+          !spawnedBoulderKeysRef.current.has(cycleKey)
+        ) {
+          spawnedBoulderKeysRef.current.add(cycleKey);
+          commitBoulderInLane(st);
         }
       }
 
-      // Interpolate rival ghosts smoothly at 60fps
-      const ghostLerp = Math.min(1, dt * 13);
-      for (const ghost of rivalGhostsRef.current.values()) {
-        ghost.xNorm += (ghost.targetXNorm - ghost.xNorm) * ghostLerp;
-        ghost.height += (ghost.targetHeight - ghost.height) * ghostLerp;
+      // 2. Advance every committed boulder independently to completion (never canceled early!)
+      const remainingBoulders: ActiveBoulder[] = [];
+      for (const b of activeBouldersRef.current) {
+        if (b.phase === 'WARNING') {
+          b.elapsedSec += dt;
+          if (b.elapsedSec >= b.warningDurationSec) {
+            const overflow = b.elapsedSec - b.warningDurationSec;
+            b.phase = 'FALLING';
+            b.elapsedSec = overflow;
+          }
+          remainingBoulders.push(b);
+          continue;
+        }
+
+        // FALLING phase: continuous roll from y = -60px past playfieldHeight + 60px
+        b.elapsedSec += dt;
+        const progress = b.elapsedSec / b.fallDurationSec;
+        b.screenY = -60 + progress * (playH + 130);
+        b.spinDeg = progress * 560;
+
+        // Live screen-space collision check against local climber
+        if (
+          !b.hitPlayer &&
+          g.status !== 'FINISHED' &&
+          g.boulderInvulnTimer <= 0 &&
+          g.stepIndex > 0 &&
+          !g.hop?.isFall
+        ) {
+          const sameLane = Math.abs(g.visualX - b.laneX) < 0.19;
+          const verticalHit = Math.abs(climberCenterY - b.screenY) < 36;
+          if (sameLane && verticalHit) {
+            b.hitPlayer = true;
+            triggerBoulderHit(g.visualX, g.visualHeight);
+          }
+        }
+
+        if (b.screenY <= playH + 68) {
+          remainingBoulders.push(b);
+        }
+      }
+      activeBouldersRef.current = remainingBoulders;
+
+      // 3. Simulate 3 local AI Rival Bots in Offline mode
+      if (isOffline) {
+        const botRng = botPrngRef.current;
+
+        for (const bot of offlineBotsRef.current) {
+          const botStep = steps[bot.stepIndex]!;
+
+          // Interpolate bot hop arc
+          if (bot.hop) {
+            bot.hop.elapsed += dt;
+            const bt = Math.min(1, bot.hop.elapsed / bot.hop.duration);
+            const eased = 1 - Math.pow(1 - bt, 2);
+            const arc = Math.sin(bt * Math.PI) * bot.hop.arcMeters;
+            bot.visualX = bot.hop.fromX + (bot.hop.toX - bot.hop.fromX) * eased;
+            bot.visualHeight =
+              bot.hop.fromHeight +
+              (bot.hop.toHeight - bot.hop.fromHeight) * eased +
+              arc;
+            if (bt >= 1) {
+              bot.visualX = botStep.x;
+              bot.visualHeight = botStep.height;
+              bot.hop = null;
+            }
+          } else {
+            bot.visualX = botStep.x;
+            bot.visualHeight = botStep.height;
+          }
+
+          if (bot.status !== 'FINISHED') {
+            if (bot.stunTimer > 0) {
+              bot.stunTimer = Math.max(0, bot.stunTimer - dt);
+              if (bot.stunTimer === 0) {
+                bot.status = 'CLIMBING';
+              }
+            }
+
+            // Check live boulder hit on visible AI bot
+            if (bot.stunTimer <= 0 && bot.stepIndex > 0 && !bot.hop?.isFall) {
+              const botScreenY =
+                anchorY -
+                (bot.visualHeight - g.cameraHeight) * PIXELS_PER_METER -
+                22;
+              if (botScreenY >= -40 && botScreenY <= playH + 40) {
+                for (const b of activeBouldersRef.current) {
+                  if (
+                    b.phase === 'FALLING' &&
+                    !b.hitBotIds.has(bot.id) &&
+                    Math.abs(bot.visualX - b.laneX) < 0.19 &&
+                    Math.abs(botScreenY - b.screenY) < 34
+                  ) {
+                    b.hitBotIds.add(bot.id);
+                    const fallIdx = Math.max(0, bot.stepIndex - 3);
+                    const fallDest = steps[fallIdx]!;
+                    bot.stepIndex = fallIdx;
+                    bot.slipElapsed = 0;
+                    bot.stunTimer = BOULDER_STUN_SEC;
+                    bot.decisionTimer = 0.52;
+                    bot.status = 'STUNNED';
+                    bot.hop = {
+                      fromX: bot.visualX,
+                      fromHeight: bot.visualHeight,
+                      toX: fallDest.x,
+                      toHeight: fallDest.height,
+                      elapsed: 0,
+                      duration: 0.32,
+                      arcMeters: 2.0,
+                      isFall: true
+                    };
+                    break;
+                  }
+                }
+              }
+            }
+
+            // Bot slippery hold check
+            if (
+              botStep.type === 'SLIPPERY_LEDGE' &&
+              bot.stunTimer <= 0 &&
+              bot.hop === null
+            ) {
+              bot.slipElapsed += dt;
+              if (bot.slipElapsed >= SLIP_LIMIT_SEC) {
+                const fallIdx = Math.max(0, bot.stepIndex - 2);
+                const fallDest = steps[fallIdx]!;
+                bot.stepIndex = fallIdx;
+                bot.slipElapsed = 0;
+                bot.decisionTimer = botRng.nextFloat(0.26, 0.38);
+                bot.hop = {
+                  fromX: bot.visualX,
+                  fromHeight: bot.visualHeight,
+                  toX: fallDest.x,
+                  toHeight: fallDest.height,
+                  elapsed: 0,
+                  duration: 0.26,
+                  arcMeters: 1.0,
+                  isFall: true
+                };
+              }
+            }
+
+            // Bot step decision cadence
+            if (bot.stunTimer <= 0) {
+              bot.decisionTimer -= dt;
+              if (bot.decisionTimer <= 0) {
+                const nextBotStep = steps[bot.stepIndex + 1];
+                if (nextBotStep) {
+                  // Check if next lane currently has a warning/falling boulder
+                  const activeLaneDanger =
+                    activeBouldersRef.current.some(
+                      (b) => b.lane === nextBotStep.requiredTap
+                    ) ||
+                    (nextBotStep.type === 'FALLING_ROCK' &&
+                      evaluateHazardPhase(nextBotStep, elapsedMs).phase !==
+                        'SAFE');
+
+                  if (
+                    activeLaneDanger &&
+                    botStep.type !== 'SLIPPERY_LEDGE' &&
+                    botRng.next() < bot.cautionProb
+                  ) {
+                    // Cautiously pause on safe opposite-lane hold
+                    bot.decisionTimer = botRng.nextFloat(0.2, 0.34);
+                  } else if (
+                    bot.stepIndex > 2 &&
+                    botRng.next() < bot.mistakeProb
+                  ) {
+                    // Occasional wrong-lane slip (-20m) so bots feel human
+                    const slipIdx = Math.max(0, bot.stepIndex - 2);
+                    const slipDest = steps[slipIdx]!;
+                    bot.stepIndex = slipIdx;
+                    bot.slipElapsed = 0;
+                    bot.decisionTimer = botRng.nextFloat(0.32, 0.46);
+                    bot.hop = {
+                      fromX: bot.visualX,
+                      fromHeight: bot.visualHeight + 1.2,
+                      toX: slipDest.x,
+                      toHeight: slipDest.height,
+                      elapsed: 0,
+                      duration: 0.25,
+                      arcMeters: 1.5,
+                      isFall: true
+                    };
+                  } else {
+                    // Advance +10m onto next hold
+                    bot.stepIndex = nextBotStep.index;
+                    bot.slipElapsed = 0;
+                    bot.score = Math.max(
+                      bot.score,
+                      Math.round(nextBotStep.height * 10)
+                    );
+                    bot.hop = {
+                      fromX: bot.visualX,
+                      fromHeight: bot.visualHeight,
+                      toX: nextBotStep.x,
+                      toHeight: nextBotStep.height,
+                      elapsed: 0,
+                      duration: 0.13,
+                      arcMeters: 2.6,
+                      isFall: false
+                    };
+
+                    if (nextBotStep.height >= roomState.targetHeight) {
+                      bot.status = 'FINISHED';
+                      bot.finishTimeMs = Math.max(1, Math.round(elapsedMs));
+                    } else if (nextBotStep.type === 'SLIPPERY_LEDGE') {
+                      // Usually hop off ice quickly, occasionally hesitate & risk slipping
+                      bot.decisionTimer =
+                        botRng.next() < 0.1
+                          ? 0.82
+                          : botRng.nextFloat(0.18, 0.34);
+                    } else {
+                      bot.decisionTimer = botRng.nextFloat(
+                        bot.minTapDelay,
+                        bot.maxTapDelay
+                      );
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Sync bot into ghost map for unified rendering
+          const ghost = rivalGhostsRef.current.get(bot.id);
+          if (ghost) {
+            ghost.xNorm = bot.visualX;
+            ghost.height = bot.visualHeight;
+            ghost.targetXNorm = bot.visualX;
+            ghost.targetHeight = bot.visualHeight;
+            ghost.status = bot.status;
+          }
+        }
+
+        // Conclude Offline race smoothly once the local player reaches 500m
+        if (g.status === 'FINISHED' && !g.offlineFinishDispatched) {
+          g.offlineFinishDelaySec -= dt;
+          if (g.offlineFinishDelaySec <= 0) {
+            g.offlineFinishDispatched = true;
+
+            const selfFinishMs =
+              g.finishTimeMs ?? Math.max(1, Math.round(elapsedMs));
+            const rawEntries: Array<Omit<MatchRankingEntry, 'rank'>> = [
+              {
+                playerId,
+                nickname: selfNickname,
+                color: selfColor,
+                height: roomState.targetHeight,
+                score: roomState.targetHeight * 10,
+                status: 'FINISHED',
+                finishTimeMs: selfFinishMs
+              },
+              ...offlineBotsRef.current.map((b) => {
+                const botH =
+                  b.status === 'FINISHED'
+                    ? roomState.targetHeight
+                    : steps[b.stepIndex]!.height;
+                return {
+                  playerId: b.id,
+                  nickname: b.nickname,
+                  color: b.color,
+                  height: botH,
+                  score: Math.max(b.score, Math.round(botH * 10)),
+                  status: b.status,
+                  finishTimeMs: b.finishTimeMs
+                };
+              })
+            ];
+
+            rawEntries.sort((a, b) => {
+              if (a.finishTimeMs !== null && b.finishTimeMs !== null) {
+                return a.finishTimeMs - b.finishTimeMs;
+              }
+              if (a.finishTimeMs !== null) return -1;
+              if (b.finishTimeMs !== null) return 1;
+              return b.height - a.height;
+            });
+
+            const rankings: MatchRankingEntry[] = rawEntries.map(
+              (entry, idx) => ({
+                ...entry,
+                rank: idx + 1
+              })
+            );
+
+            const nowFinished = Date.now();
+            const baseRoom = roomStateRef.current;
+            const finishedRoom: RoomState = {
+              ...baseRoom,
+              phase: 'FINISHED',
+              status: 'FINISHED',
+              finishedAt: nowFinished,
+              winnerId: rankings[0]?.playerId ?? playerId,
+              players: rankings.map((r) => ({
+                id: r.playerId,
+                nickname: r.nickname,
+                name: r.nickname,
+                isHost: r.playerId === playerId,
+                isReady: true,
+                color: r.color,
+                height: r.height,
+                x: WORLD_WIDTH * 0.5,
+                y: r.height,
+                score: r.score,
+                status: r.status,
+                finishTimeMs: r.finishTimeMs,
+                ping: 0
+              }))
+            };
+
+            onOfflineFinishRef.current?.({
+              roomCode: baseRoom.code,
+              winnerId: finishedRoom.winnerId,
+              seed: baseRoom.seed,
+              targetHeight: baseRoom.targetHeight,
+              durationMs: selfFinishMs,
+              reason: 'TARGET_REACHED',
+              rankings,
+              room: finishedRoom
+            });
+          }
+        }
+      } else {
+        // Online mode: interpolate incoming 20Hz rival ghosts smoothly at 60fps
+        const ghostLerp = Math.min(1, dt * 13);
+        for (const ghost of rivalGhostsRef.current.values()) {
+          ghost.xNorm += (ghost.targetXNorm - ghost.xNorm) * ghostLerp;
+          ghost.height += (ghost.targetHeight - ghost.height) * ghostLerp;
+        }
       }
 
       // Animate Summit ambient snow & left-to-right cosmetic Blizzard gusts
@@ -779,7 +1340,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         cancelAnimationFrame(rafId);
       }
     };
-  }, [queueOrEmitMove, roomState.targetHeight, steps, triggerBoulderHit]);
+  }, [
+    isOffline,
+    playerId,
+    queueOrEmitMove,
+    roomState.targetHeight,
+    selfColor,
+    selfNickname,
+    steps,
+    triggerBoulderHit
+  ]);
 
   // Derived values for current render frame
   const g = gameRef.current;
@@ -789,6 +1359,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const activeBiome = getBiomeForHeight(g.visualHeight, roomState.targetHeight);
   const palette = BIOME_PALETTES[activeBiome];
+
+  // Clung snow intensity scales upward from Foothills (0.42) -> Cliffs (0.70) -> Summit (0.95)
+  const snowPatchOpacity =
+    activeBiome === 'SUMMIT' ? 0.94 : activeBiome === 'CLIFFS' ? 0.7 : 0.44;
 
   const blizzard = evaluateSummitBlizzard(
     steps,
@@ -809,31 +1383,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const normToCliffX = (normX: number): number =>
     cliffMargin + normX * cliffWidth;
 
-  // Visible window (~5 steps visible with 120px per 10m step!)
-  const minVisibleM = g.cameraHeight - 22;
-  const maxVisibleM =
-    g.cameraHeight + anchorY / PIXELS_PER_METER + 16;
+  const minVisibleM = g.cameraHeight - 24;
+  const maxVisibleM = g.cameraHeight + anchorY / PIXELS_PER_METER + 16;
 
   const visibleSteps = steps.filter(
     (s) => s.height >= minVisibleM && s.height <= maxVisibleM
   );
 
-  // Active nearby rockfall spawners (at most 1 due to >=5 step spacing)
-  const activeRockfallSteps = steps.filter(
-    (s) =>
-      s.type === 'FALLING_ROCK' &&
-      s.index >= Math.max(1, g.stepIndex - 1) &&
-      s.index <= g.stepIndex + 4
-  );
-
-  const visibleGhosts = Array.from(rivalGhostsRef.current.values()).filter(
+  const allRivals = Array.from(rivalGhostsRef.current.values());
+  const visibleGhosts = allRivals.filter(
     (rg) => rg.height >= minVisibleM && rg.height <= maxVisibleM
   );
 
   const summitScreenY = worldToScreenY(roomState.targetHeight);
   const cliffTopY = Math.max(-40, summitScreenY - 12);
 
-  // Subtle parallax shifts for distant mountain ranges
   const farParallaxY = Math.min(90, g.cameraHeight * 0.14);
   const midParallaxY = Math.min(140, g.cameraHeight * 0.28);
 
@@ -842,18 +1406,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     g.lockTimer <= 0 &&
     g.hop === null &&
     g.status !== 'FINISHED';
-  const slipWobblePx = isSlippingNow
-    ? Math.sin(g.animClock * 38) * 3.5
-    : 0;
+  const slipWobblePx = isSlippingNow ? Math.sin(g.animClock * 38) * 3.5 : 0;
 
   const climberScreenX = normToCliffX(g.visualX) - 19 + slipWobblePx;
-  const climberScreenY = worldToScreenY(g.visualHeight) - 44;
+  const climberScreenY = worldToScreenY(g.visualHeight) - 43;
   const arrowBobPx = Math.sin(g.animClock * 7.5) * 4;
 
   const selfProgressPct = Math.min(
     100,
     Math.max(0, (logicalStep.height / roomState.targetHeight) * 100)
   );
+
+  const scrollPx = g.cameraHeight * PIXELS_PER_METER;
 
   return (
     <View style={styles.root}>
@@ -879,7 +1443,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 {palette.name}
               </Text>
             </View>
-            <Text style={styles.roomBadgeText}>{roomState.code}</Text>
+            <Text style={styles.roomBadgeText}>
+              {isOffline ? 'VS AI' : roomState.code}
+            </Text>
           </View>
         </View>
 
@@ -902,18 +1468,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             { width: playfieldWidth, backgroundColor: palette.skyBg }
           ]}
         >
-          {/* Summit Starry Sky Twinkles */}
-          {activeBiome === 'SUMMIT' && (
-            <View pointerEvents="none" style={styles.starsLayer}>
-              <View style={[styles.starDot, { left: '12%', top: '8%' }]} />
-              <View style={[styles.starDot, { left: '84%', top: '11%' }]} />
-              <View style={[styles.starDot, { left: '26%', top: '19%' }]} />
-              <View style={[styles.starDot, { left: '74%', top: '24%' }]} />
-              <View style={[styles.starDot, { left: '91%', top: '33%' }]} />
-            </View>
-          )}
+          {/* Starry Night Sky Twinkles */}
+          <View pointerEvents="none" style={styles.starsLayer}>
+            <View style={[styles.starDot, { left: '12%', top: '8%' }]} />
+            <View style={[styles.starDot, { left: '84%', top: '11%' }]} />
+            <View style={[styles.starDot, { left: '26%', top: '19%' }]} />
+            <View style={[styles.starDot, { left: '74%', top: '24%' }]} />
+            <View style={[styles.starDot, { left: '91%', top: '33%' }]} />
+          </View>
 
-          {/* Layer 1: Far Parallax Mountain Range Silhouette */}
+          {/* Layer 1: Far Parallax Snowy Mountain Silhouettes */}
           <View
             pointerEvents="none"
             style={[
@@ -926,13 +1490,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 styles.mountainPeakFarLeft,
                 { backgroundColor: palette.farPeakColor }
               ]}
-            />
+            >
+              <View style={styles.distantPeakSnowCap} />
+            </View>
             <View
               style={[
                 styles.mountainPeakFarRight,
                 { backgroundColor: palette.farPeakColor }
               ]}
-            />
+            >
+              <View style={styles.distantPeakSnowCap} />
+            </View>
           </View>
 
           {/* Layer 2: Mid Parallax Craggy Ridges */}
@@ -957,7 +1525,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             />
           </View>
 
-          {/* Layer 3: Continuous Central Rock Cliff Face (0m -> 500m Snowy Peak) */}
+          {/* Layer 3: Rugged Snowy Rock Cliff Wall (0m -> 500m Snowy Peak) */}
           <View
             pointerEvents="none"
             style={[
@@ -971,12 +1539,89 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             ]}
           >
-            {/* Snowy Summit Peak Crest when approaching 500m */}
-            {summitScreenY > -80 && (
-              <View style={styles.summitSnowCrest} />
-            )}
+            {/* Jagged Left & Right Rock Crag Buttresses */}
+            {EDGE_CRAGS.map((cragIdx) => {
+              const edgeY =
+                ((scrollPx + cragIdx * 112) % CLIFF_TILE_PERIOD_PX) - 40;
+              return (
+                <React.Fragment key={`edge-crag-${cragIdx}`}>
+                  <View
+                    style={[
+                      styles.leftEdgeCrag,
+                      {
+                        top: edgeY,
+                        backgroundColor: palette.rockCragEdge
+                      }
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.rightEdgeCrag,
+                      {
+                        top: edgeY + 52,
+                        backgroundColor: palette.rockCragEdge
+                      }
+                    ]}
+                  />
+                </React.Fragment>
+              );
+            })}
 
-            {/* Strict 50/50 Center Vertical Dihedral Rock Seam */}
+            {/* Scrolling Angular Stone Facets, Fissure Cracks & Clung White Snow Patches */}
+            {CLIFF_FACETS.map((f) => {
+              const topPx =
+                ((scrollPx + f.baseOffsetPx) % CLIFF_TILE_PERIOD_PX) - 50;
+
+              if (f.isCrack) {
+                return (
+                  <View
+                    key={`fissure-${f.id}`}
+                    style={[
+                      styles.rockFissureCrack,
+                      {
+                        left: `${f.leftPct}%`,
+                        top: topPx,
+                        height: f.heightPx,
+                        backgroundColor: palette.fissureColor,
+                        transform: [{ rotate: f.rotateDeg }]
+                      }
+                    ]}
+                  />
+                );
+              }
+
+              return (
+                <View
+                  key={`facet-${f.id}`}
+                  style={[
+                    styles.rockFacetPolygon,
+                    {
+                      left: `${f.leftPct}%`,
+                      top: topPx,
+                      width: `${f.widthPct}%`,
+                      height: f.heightPx,
+                      backgroundColor: palette.rockPatch,
+                      borderBottomColor: palette.rockCragEdge,
+                      transform: [{ rotate: f.rotateDeg }]
+                    }
+                  ]}
+                >
+                  {f.hasSnowPatch && (
+                    <View
+                      style={[
+                        styles.clungSnowShelf,
+                        {
+                          opacity: snowPatchOpacity,
+                          height: activeBiome === 'SUMMIT' ? 8 : 5
+                        }
+                      ]}
+                    />
+                  )}
+                </View>
+              );
+            })}
+
+            {/* Strict 50/50 Center Vertical Dihedral Lane Seam (kept clear) */}
             <View
               style={[
                 styles.centerRockSeam,
@@ -984,26 +1629,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               ]}
             />
 
-            {/* Subtle Scrolling Rock Facet Textures */}
-            {[0, 1, 2, 3, 4, 5].map((facetIdx) => {
-              const offsetPx =
-                ((g.cameraHeight * PIXELS_PER_METER + facetIdx * 115) % 690) -
-                60;
-              const onLeft = facetIdx % 2 === 0;
-              return (
-                <View
-                  key={`facet-${facetIdx}`}
-                  style={[
-                    styles.rockFacetPatch,
-                    {
-                      backgroundColor: palette.rockPatch,
-                      left: onLeft ? '12%' : '62%',
-                      top: offsetPx
-                    }
-                  ]}
-                />
-              );
-            })}
+            {/* Thick Snowy Summit Crest at 500m */}
+            {summitScreenY > -80 && <View style={styles.summitSnowCrest} />}
           </View>
 
           {/* Summit Golden Flagpole at 500m Crest */}
@@ -1027,7 +1654,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </View>
           )}
 
-          {/* Sculpted 2-Lane Mountain Holds */}
+          {/* Inverted-Triangle Snow-Capped Rock & Ice Holds */}
           {visibleSteps.map((step) => {
             const screenY = worldToScreenY(step.height);
             const isBase = step.index === 0;
@@ -1035,58 +1662,77 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             const isNextHold = nextStep?.index === step.index;
             const isCurrentHold = logicalStep.index === step.index;
 
-            const holdW = isBase
-              ? cliffWidth - 16
-              : isSummit
-              ? cliffWidth * 0.72
-              : HOLD_WIDTH_PX;
-
-            const centerX = isBase || isSummit
-              ? playfieldWidth * 0.5
-              : normToCliffX(step.x);
-            const leftPx = centerX - holdW / 2;
-
-            const isMossySlip =
-              step.type === 'SLIPPERY_LEDGE' && step.biome === 'FOOTHILLS';
-            const isIcySlip =
-              step.type === 'SLIPPERY_LEDGE' && step.biome !== 'FOOTHILLS';
-
             const slipPct =
               isCurrentHold && isSlippingNow
                 ? Math.min(1, g.slipElapsed / SLIP_LIMIT_SEC)
                 : 0;
 
+            if (isBase || isSummit) {
+              const shelfW = isBase ? cliffWidth - 18 : cliffWidth * 0.74;
+              const shelfLeft = playfieldWidth * 0.5 - shelfW / 2;
+              return (
+                <React.Fragment key={step.id}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.landmarkShelf,
+                      {
+                        width: shelfW,
+                        backgroundColor: isSummit ? '#CA8A04' : '#334155',
+                        borderColor: isSummit ? '#FEF08A' : '#64748B',
+                        transform: [
+                          { translateX: shelfLeft },
+                          { translateY: screenY }
+                        ]
+                      }
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.landmarkSnowTop,
+                        {
+                          backgroundColor: isSummit ? '#FEF9C3' : '#F8FAFC'
+                        }
+                      ]}
+                    />
+                  </View>
+
+                  {isNextHold && g.status !== 'FINISHED' && (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.nextArrowCallout,
+                        {
+                          transform: [
+                            { translateX: normToCliffX(step.x) - 25 },
+                            { translateY: screenY - 38 + arrowBobPx }
+                          ]
+                        }
+                      ]}
+                    >
+                      <Text style={styles.nextArrowText}>
+                        {step.requiredTap === 'LEFT' ? '◀' : '▶'}
+                      </Text>
+                    </View>
+                  )}
+                </React.Fragment>
+              );
+            }
+
+            const isIcyHold = step.type === 'SLIPPERY_LEDGE';
+            const holdWidth = isIcyHold
+              ? SNOWY_ICE_HOLD_WIDTH
+              : SNOWY_ROCK_HOLD_WIDTH;
+            const centerX = normToCliffX(step.x);
+            const leftPx = centerX - holdWidth / 2;
+
             return (
               <React.Fragment key={step.id}>
-                {/* Sculpted Rock / Moss / Ice Hold */}
                 <View
                   pointerEvents="none"
                   style={[
-                    styles.holdOuter,
+                    styles.holdPosWrap,
                     {
-                      width: holdW,
-                      height: isBase || isSummit ? 28 : HOLD_HEIGHT_PX,
-                      backgroundColor: isSummit
-                        ? '#CA8A04'
-                        : isMossySlip
-                        ? '#3F3F46'
-                        : isIcySlip
-                        ? '#0284C7'
-                        : palette.graniteBody,
-                      borderBottomColor: isSummit
-                        ? '#713F12'
-                        : isIcySlip
-                        ? '#075985'
-                        : palette.graniteShadow,
-                      borderColor: isNextHold
-                        ? '#38BDF8'
-                        : isSummit
-                        ? '#FEF08A'
-                        : isMossySlip
-                        ? '#65A30D'
-                        : isIcySlip
-                        ? '#BAE6FD'
-                        : palette.cliffEdge,
                       transform: [
                         { translateX: leftPx },
                         { translateY: screenY }
@@ -1094,70 +1740,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     }
                   ]}
                 >
-                  {/* Chiseled Top Shelf Cap (Granite / Lush Moss / Specular Ice) */}
-                  <View
-                    style={[
-                      styles.holdTopShelf,
-                      {
-                        backgroundColor: isSummit
-                          ? '#FEF08A'
-                          : isMossySlip
-                          ? '#84CC16'
-                          : isIcySlip
-                          ? '#E0F2FE'
-                          : palette.graniteTop
-                      }
-                    ]}
-                  />
-
-                  {/* Mossy Overhang Tufts (Foothills Slippery Hold) */}
-                  {isMossySlip && (
-                    <View style={styles.mossTuftRow}>
-                      <View style={styles.mossTuft} />
-                      <View style={[styles.mossTuft, styles.mossTuftLong]} />
-                      <View style={styles.mossTuft} />
-                    </View>
-                  )}
-
-                  {/* Timed Slip Progress Bar when standing on SLIPPERY_LEDGE */}
-                  {step.type === 'SLIPPERY_LEDGE' && slipPct > 0 && (
-                    <View style={styles.slipMeterTrack}>
-                      <View
-                        style={[
-                          styles.slipMeterFill,
-                          {
-                            width: `${Math.round(slipPct * 100)}%`,
-                            backgroundColor:
-                              slipPct > 0.68 ? '#EF4444' : '#FDE047'
-                          }
-                        ]}
-                      />
-                    </View>
+                  {isIcyHold ? (
+                    <SnowyIceHold
+                      width={SNOWY_ICE_HOLD_WIDTH}
+                      isTarget={isNextHold}
+                      slipProgress={slipPct}
+                    />
+                  ) : (
+                    <SnowyRockHold
+                      width={SNOWY_ROCK_HOLD_WIDTH}
+                      isTarget={isNextHold}
+                      rockMainColor={palette.graniteBody}
+                      rockLightColor={palette.graniteLight}
+                      rockDarkColor={palette.graniteShadow}
+                    />
                   )}
                 </View>
 
-                {/* Hanging Icicle Teeth beneath Icy Ledges */}
-                {isIcySlip && (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.icicleRow,
-                      {
-                        width: holdW,
-                        transform: [
-                          { translateX: leftPx },
-                          { translateY: screenY + HOLD_HEIGHT_PX - 2 }
-                        ]
-                      }
-                    ]}
-                  >
-                    <View style={styles.icicleSpike} />
-                    <View style={[styles.icicleSpike, styles.icicleSpikeTall]} />
-                    <View style={styles.icicleSpike} />
-                  </View>
-                )}
-
-                {/* Bold Next-Ledge Arrow Indicator (`currentStep + 1`) */}
+                {/* Next-Hold Direction Callout */}
                 {isNextHold && g.status !== 'FINISHED' && (
                   <View
                     pointerEvents="none"
@@ -1165,11 +1765,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                       styles.nextArrowCallout,
                       {
                         transform: [
-                          {
-                            translateX: isSummit
-                              ? normToCliffX(step.x) - 25
-                              : centerX - 25
-                          },
+                          { translateX: centerX - 25 },
                           { translateY: screenY - 38 + arrowBobPx }
                         ]
                       }
@@ -1184,10 +1780,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             );
           })}
 
-          {/* Translucent Rival Climber Ghosts */}
+          {/* Translucent Rival Climber Ghosts (Online Rivals or Offline AI Bots) */}
           {visibleGhosts.map((ghost) => {
             const gx = normToCliffX(ghost.xNorm) - 19;
-            const gy = worldToScreenY(ghost.height) - 44;
+            const gy = worldToScreenY(ghost.height) - 43;
             return (
               <View
                 key={ghost.id}
@@ -1244,27 +1840,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             />
           </View>
 
-          {/* Full-Screen Lane Falling Boulders & Pinned Top-Edge Warning Badges */}
-          {activeRockfallSteps.map((rockStep) => {
-            const hz = evaluateHazardPhase(rockStep, elapsedNowMs);
-            if (hz.phase === 'SAFE') return null;
-
-            const laneCenterX = normToCliffX(rockStep.x);
-            const boulderY =
-              -60 + hz.phaseProgress * (playfieldHeight + 120);
-            const spinDeg = `${Math.round(hz.phaseProgress * 540)}deg`;
-            const warnPulse = 0.72 + Math.sin(g.animClock * 16) * 0.28;
+          {/* Decoupled, Non-Canceling Full-Screen Lane Boulders */}
+          {activeBouldersRef.current.map((boulder) => {
+            const laneCenterX = normToCliffX(boulder.laneX);
+            const warnPulse = 0.68 + Math.sin(g.animClock * 18) * 0.32;
 
             return (
-              <React.Fragment key={`boulder-${rockStep.id}`}>
-                {/* Subtle vertical lane shadow guide during warning/active */}
+              <React.Fragment key={boulder.id}>
                 <View
                   pointerEvents="none"
                   style={[
                     styles.boulderLaneTrack,
-                    {
-                      left: laneCenterX - 30
-                    }
+                    { left: laneCenterX - 30 }
                   ]}
                 />
 
@@ -1274,7 +1861,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   style={[
                     styles.topEdgeRockWarning,
                     {
-                      opacity: hz.phase === 'WARNING' ? warnPulse : 1,
+                      opacity: boulder.phase === 'WARNING' ? warnPulse : 0.92,
                       transform: [{ translateX: laneCenterX - 52 }]
                     }
                   ]}
@@ -1284,23 +1871,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </Text>
                 </View>
 
-                {/* Tumbling Full-Screen Rocky Boulder (-60px -> viewportHeight + 60px) */}
-                {hz.phase === 'ACTIVE' && (
+                {/* Rolling Full-Screen Boulder (-60px -> viewportHeight + 60px) */}
+                {boulder.phase === 'FALLING' && (
                   <View
                     pointerEvents="none"
                     style={[
-                      styles.tumblingBoulder,
+                      styles.tumblingBoulderWrap,
                       {
                         transform: [
                           { translateX: laneCenterX - BOULDER_SIZE_PX / 2 },
-                          { translateY: boulderY - BOULDER_SIZE_PX / 2 },
-                          { rotate: spinDeg }
+                          { translateY: boulder.screenY - BOULDER_SIZE_PX / 2 }
                         ]
                       }
                     ]}
                   >
-                    <View style={styles.boulderFacetLight} />
-                    <View style={styles.boulderFacetCrag} />
+                    <BoulderSprite
+                      size={BOULDER_SIZE_PX}
+                      spinDeg={`${Math.round(boulder.spinDeg)}deg`}
+                    />
                   </View>
                 )}
               </React.Fragment>
@@ -1310,7 +1898,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           {/* Summit Ambient Snow & Cosmetic Full-Screen Left-to-Right Blizzard Whiteout (350-500m) */}
           {(activeBiome === 'SUMMIT' || blizzard.intensity > 0.02) && (
             <View pointerEvents="none" style={styles.blizzardOverlayLayer}>
-              {/* Frosty Whiteout Veil (pulses ~35-55% during active summit blizzard) */}
               {blizzard.intensity > 0.02 && (
                 <View
                   style={[
@@ -1320,7 +1907,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 />
               )}
 
-              {/* Slanted Left-to-Right Wind Streaks & Swirling Snow */}
               {snowRef.current.map((s) => {
                 const isGusting = blizzard.intensity > 0.12;
                 return (
@@ -1354,7 +1940,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </View>
           )}
 
-          {/* Non-Blocking Top Floating Toast (Biome Transitions & Slip/Hit Notices) */}
+          {/* Non-Blocking Top Floating Toast */}
           {g.toast && (
             <View pointerEvents="none" style={styles.toastWrap}>
               <View style={styles.toastPill}>
@@ -1366,30 +1952,28 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           )}
         </View>
 
-        {/* Right-Side Vertical Altitude Progress Rail */}
+        {/* Right-Side Vertical Altitude Progress Rail (Shows Online Rivals or Offline AI Bots) */}
         <View style={styles.altitudeRail}>
           <Text style={styles.railFlag}>🚩</Text>
           <View style={styles.railBar}>
             <View style={[styles.railTick, { bottom: '30%' }]} />
             <View style={[styles.railTick, { bottom: '70%' }]} />
 
-            {livePlayers
-              .filter((lp) => lp.id !== playerId)
-              .map((rival) => {
-                const pct = Math.min(
-                  100,
-                  Math.max(0, (rival.height / roomState.targetHeight) * 100)
-                );
-                return (
-                  <View
-                    key={`rail-${rival.id}`}
-                    style={[
-                      styles.railRivalMarker,
-                      { bottom: `${pct}%`, backgroundColor: rival.color }
-                    ]}
-                  />
-                );
-              })}
+            {allRivals.map((rival) => {
+              const pct = Math.min(
+                100,
+                Math.max(0, (rival.height / roomState.targetHeight) * 100)
+              );
+              return (
+                <View
+                  key={`rail-${rival.id}`}
+                  style={[
+                    styles.railRivalMarker,
+                    { bottom: `${pct}%`, backgroundColor: rival.color }
+                  ]}
+                />
+              );
+            })}
 
             <View
               style={[
@@ -1402,7 +1986,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         </View>
       </View>
 
-      {/* Ergonomic 50/50 Left & Right Tap Controls */}
+      {/* Pure 2-Button 50/50 Left & Right Tap Controls */}
       <View style={styles.controlsDeck}>
         <Pressable
           style={({ pressed }) => [
@@ -1549,7 +2133,7 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 1.5,
     backgroundColor: '#E0F2FE',
-    opacity: 0.75
+    opacity: 0.68
   },
   parallaxLayer: {
     position: 'absolute',
@@ -1565,7 +2149,8 @@ const styles = StyleSheet.create({
     width: 240,
     height: 240,
     borderRadius: 14,
-    transform: [{ rotate: '45deg' }]
+    transform: [{ rotate: '45deg' }],
+    overflow: 'hidden'
   },
   mountainPeakFarRight: {
     position: 'absolute',
@@ -1574,7 +2159,13 @@ const styles = StyleSheet.create({
     width: 260,
     height: 260,
     borderRadius: 16,
-    transform: [{ rotate: '45deg' }]
+    transform: [{ rotate: '45deg' }],
+    overflow: 'hidden'
+  },
+  distantPeakSnowCap: {
+    width: 68,
+    height: 68,
+    backgroundColor: 'rgba(241, 245, 249, 0.22)'
   },
   mountainPeakMidLeft: {
     position: 'absolute',
@@ -1604,13 +2195,51 @@ const styles = StyleSheet.create({
     borderTopWidth: 3,
     overflow: 'hidden'
   },
+  leftEdgeCrag: {
+    position: 'absolute',
+    left: -14,
+    width: 28,
+    height: 44,
+    borderRadius: 5,
+    transform: [{ rotate: '28deg' }]
+  },
+  rightEdgeCrag: {
+    position: 'absolute',
+    right: -14,
+    width: 28,
+    height: 44,
+    borderRadius: 5,
+    transform: [{ rotate: '-28deg' }]
+  },
+  rockFacetPolygon: {
+    position: 'absolute',
+    borderRadius: 7,
+    borderBottomWidth: 3,
+    overflow: 'hidden',
+    opacity: 0.72
+  },
+  clungSnowShelf: {
+    position: 'absolute',
+    top: 0,
+    left: 2,
+    right: 4,
+    backgroundColor: '#F1F5F9',
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5
+  },
+  rockFissureCrack: {
+    position: 'absolute',
+    width: 2.5,
+    borderRadius: 2,
+    opacity: 0.65
+  },
   summitSnowCrest: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 26,
-    backgroundColor: '#F1F5F9',
+    height: 28,
+    backgroundColor: '#F8FAFC',
     borderBottomLeftRadius: 16,
     borderBottomRightRadius: 16
   },
@@ -1621,14 +2250,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 3,
     marginLeft: -1.5,
-    opacity: 0.75
-  },
-  rockFacetPatch: {
-    position: 'absolute',
-    width: '26%',
-    height: 36,
-    borderRadius: 8,
-    opacity: 0.42
+    opacity: 0.78
   },
   summitPoleContainer: {
     position: 'absolute',
@@ -1659,75 +2281,31 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.5
   },
-  holdOuter: {
+  holdPosWrap: {
+    position: 'absolute',
+    left: 0,
+    top: 0
+  },
+  landmarkShelf: {
     position: 'absolute',
     left: 0,
     top: 0,
-    borderTopLeftRadius: 7,
-    borderTopRightRadius: 7,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
+    height: 26,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
     borderWidth: 1.5,
     borderBottomWidth: 6,
-    overflow: 'hidden',
-    justifyContent: 'flex-end'
+    borderBottomColor: '#1E293B',
+    overflow: 'hidden'
   },
-  holdTopShelf: {
+  landmarkSnowTop: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 6
-  },
-  mossTuftRow: {
-    position: 'absolute',
-    top: 4,
-    left: 10,
-    right: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-around'
-  },
-  mossTuft: {
-    width: 14,
-    height: 6,
-    backgroundColor: '#65A30D',
-    borderBottomLeftRadius: 6,
-    borderBottomRightRadius: 6
-  },
-  mossTuftLong: {
-    height: 9,
-    backgroundColor: '#84CC16'
-  },
-  icicleRow: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    paddingHorizontal: 14
-  },
-  icicleSpike: {
-    width: 7,
-    height: 9,
-    backgroundColor: '#BAE6FD',
-    borderBottomLeftRadius: 5,
-    borderBottomRightRadius: 5,
-    opacity: 0.9
-  },
-  icicleSpikeTall: {
-    height: 14,
-    backgroundColor: '#E0F2FE'
-  },
-  slipMeterTrack: {
-    height: 4,
-    marginHorizontal: 8,
-    marginBottom: 3,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    borderRadius: 2,
-    overflow: 'hidden'
-  },
-  slipMeterFill: {
-    height: '100%'
+    height: 8
   },
   nextArrowCallout: {
     position: 'absolute',
@@ -1754,7 +2332,7 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   climberGhostRoot: {
-    opacity: 0.52
+    opacity: 0.54
   },
   climberPack: {
     position: 'absolute',
@@ -1876,7 +2454,7 @@ const styles = StyleSheet.create({
   ghostTag: {
     fontSize: 9,
     fontWeight: '800',
-    backgroundColor: 'rgba(9, 15, 29, 0.8)',
+    backgroundColor: 'rgba(9, 15, 29, 0.82)',
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 4,
@@ -1911,39 +2489,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.6
   },
-  tumblingBoulder: {
+  tumblingBoulderWrap: {
     position: 'absolute',
     left: 0,
-    top: 0,
-    width: BOULDER_SIZE_PX,
-    height: BOULDER_SIZE_PX,
-    borderRadius: 16,
-    backgroundColor: '#57534E',
-    borderWidth: 2.5,
-    borderColor: '#1C1917',
-    borderBottomWidth: 5,
-    borderBottomColor: '#292524',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden'
-  },
-  boulderFacetLight: {
-    position: 'absolute',
-    top: 5,
-    left: 6,
-    width: 18,
-    height: 12,
-    borderRadius: 5,
-    backgroundColor: '#A8A29E'
-  },
-  boulderFacetCrag: {
-    position: 'absolute',
-    bottom: 6,
-    right: 7,
-    width: 14,
-    height: 14,
-    borderRadius: 4,
-    backgroundColor: '#44403C'
+    top: 0
   },
   blizzardOverlayLayer: {
     position: 'absolute',
@@ -2036,7 +2585,7 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
     marginBottom: -5,
-    opacity: 0.85,
+    opacity: 0.88,
     borderWidth: 1,
     borderColor: '#090F1D'
   },

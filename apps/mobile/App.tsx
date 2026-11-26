@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,11 +11,19 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { DeviceIdentity } from '@climb/shared';
+import {
+  DeviceIdentity,
+  GAME_CONSTANTS,
+  generateRandomSeed,
+  MatchFinishedPayload,
+  Player,
+  RoomState
+} from '@climb/shared';
 import {
   getOrCreateDeviceIdentity,
   updateNickname
 } from './src/db/identityService';
+import { getAllLocalRecords } from './src/db/scoreService';
 import { useMultiplayerLobby } from './src/hooks/useMultiplayerLobby';
 import { LobbyScreen } from './src/screens/LobbyScreen';
 import { WaitingRoomScreen } from './src/screens/WaitingRoomScreen';
@@ -25,13 +34,121 @@ import { HapticsService } from './src/haptics/hapticsService';
 const SERVER_URL =
   process.env.EXPO_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
+type OfflinePhase = 'NONE' | 'COUNTDOWN' | 'PLAYING' | 'FINISHED';
+
+function buildOfflineRoomState(
+  playerId: string,
+  playerName: string,
+  seed: number,
+  phase: 'COUNTDOWN' | 'PLAYING' | 'FINISHED'
+): RoomState {
+  const now = Date.now();
+  const baseX = GAME_CONSTANTS.WORLD_WIDTH * 0.5;
+  const players: Player[] = [
+    {
+      id: playerId,
+      nickname: playerName,
+      name: playerName,
+      isHost: true,
+      isReady: true,
+      color: '#3B82F6',
+      height: 0,
+      x: baseX,
+      y: 0,
+      score: 0,
+      status: phase === 'PLAYING' ? 'CLIMBING' : 'IDLE',
+      finishTimeMs: null,
+      ping: 0
+    },
+    {
+      id: 'ai-bot-frost',
+      nickname: 'FrostBot',
+      name: 'FrostBot',
+      isHost: false,
+      isReady: true,
+      color: '#EF4444',
+      height: 0,
+      x: baseX,
+      y: 0,
+      score: 0,
+      status: phase === 'PLAYING' ? 'CLIMBING' : 'IDLE',
+      finishTimeMs: null,
+      ping: 0
+    },
+    {
+      id: 'ai-bot-crag',
+      nickname: 'CragHopper',
+      name: 'CragHopper',
+      isHost: false,
+      isReady: true,
+      color: '#10B981',
+      height: 0,
+      x: baseX,
+      y: 0,
+      score: 0,
+      status: phase === 'PLAYING' ? 'CLIMBING' : 'IDLE',
+      finishTimeMs: null,
+      ping: 0
+    },
+    {
+      id: 'ai-bot-peak',
+      nickname: 'PeakRunner',
+      name: 'PeakRunner',
+      isHost: false,
+      isReady: true,
+      color: '#F59E0B',
+      height: 0,
+      x: baseX,
+      y: 0,
+      score: 0,
+      status: phase === 'PLAYING' ? 'CLIMBING' : 'IDLE',
+      finishTimeMs: null,
+      ping: 0
+    }
+  ];
+
+  return {
+    code: 'SOLO',
+    phase,
+    status: phase,
+    hostId: playerId,
+    players,
+    maxPlayers: 4,
+    minPlayers: 1,
+    config: {
+      seed,
+      targetHeight: 500,
+      countdownSec: 3
+    },
+    seed,
+    targetHeight: 500,
+    goalHeight: 500,
+    countdownRemaining: phase === 'COUNTDOWN' ? 3 : null,
+    createdAt: now,
+    startedAt: phase === 'PLAYING' ? now : null,
+    finishedAt: null,
+    winnerId: null
+  };
+}
+
 export default function App(): React.JSX.Element {
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isEditingNickname, setIsEditingNickname] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [nicknameError, setNicknameError] = useState<string | null>(null);
-  const [showProfileInfo, setShowProfileInfo] = useState(false);
+
+  // Quiet Long-Press Dev Inspector Modal (~1.2s hold on WAY UP! wordmark)
+  const [showDevModal, setShowDevModal] = useState(false);
+  const [sqliteRecordCount, setSqliteRecordCount] = useState<number>(0);
+
+  // Offline Solo + 3 AI Bots Lifecycle
+  const [offlinePhase, setOfflinePhase] = useState<OfflinePhase>('NONE');
+  const [offlineCountdown, setOfflineCountdown] = useState<number>(3);
+  const [offlineRoom, setOfflineRoom] = useState<RoomState | null>(null);
+  const [offlineResult, setOfflineResult] =
+    useState<MatchFinishedPayload | null>(null);
+  const offlineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initialize SQLite device identity on startup
   useEffect(() => {
@@ -49,6 +166,19 @@ export default function App(): React.JSX.Element {
     void init();
   }, []);
 
+  const clearOfflineTimer = useCallback(() => {
+    if (offlineTimerRef.current) {
+      clearInterval(offlineTimerRef.current);
+      offlineTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearOfflineTimer();
+    };
+  }, [clearOfflineTimer]);
+
   const playerId = identity?.guestUuid ?? 'guest-loading';
   const playerName = identity?.nickname ?? 'Climber';
 
@@ -56,7 +186,6 @@ export default function App(): React.JSX.Element {
     connectionState,
     roomState,
     countdownSeconds,
-    matchStartPayload,
     livePlayers,
     matchResult,
     error,
@@ -93,6 +222,79 @@ export default function App(): React.JSX.Element {
     }
   };
 
+  const handleOpenDevModal = useCallback(async () => {
+    void HapticsService.selection();
+    try {
+      const records = await getAllLocalRecords();
+      setSqliteRecordCount(records.length);
+    } catch {
+      setSqliteRecordCount(0);
+    }
+    setShowDevModal(true);
+  }, []);
+
+  // Launch fresh Offline match (3-2-1 quick countdown -> GameScreen with 3 AI bots)
+  const startOfflineRace = useCallback(() => {
+    clearOfflineTimer();
+    const freshSeed = generateRandomSeed();
+    const initialRoom = buildOfflineRoomState(
+      playerId,
+      playerName,
+      freshSeed,
+      'COUNTDOWN'
+    );
+
+    setOfflineResult(null);
+    setOfflineRoom(initialRoom);
+    setOfflineCountdown(3);
+    setOfflinePhase('COUNTDOWN');
+    void HapticsService.warning();
+
+    let remaining = 3;
+    offlineTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        setOfflineCountdown(remaining);
+        void HapticsService.warning();
+        return;
+      }
+
+      clearOfflineTimer();
+      const playingRoom: RoomState = {
+        ...initialRoom,
+        phase: 'PLAYING',
+        status: 'PLAYING',
+        countdownRemaining: null,
+        startedAt: Date.now(),
+        players: initialRoom.players.map((p) => ({
+          ...p,
+          status: 'CLIMBING'
+        }))
+      };
+      setOfflineRoom(playingRoom);
+      setOfflinePhase('PLAYING');
+      void HapticsService.springBoost();
+    }, 750);
+  }, [clearOfflineTimer, playerId, playerName]);
+
+  const handleOfflineFinished = useCallback(
+    (finishedPayload: MatchFinishedPayload) => {
+      clearOfflineTimer();
+      setOfflineResult(finishedPayload);
+      setOfflineRoom(finishedPayload.room);
+      setOfflinePhase('FINISHED');
+    },
+    [clearOfflineTimer]
+  );
+
+  const exitOfflineMode = useCallback(() => {
+    clearOfflineTimer();
+    setOfflinePhase('NONE');
+    setOfflineRoom(null);
+    setOfflineResult(null);
+    void HapticsService.selection();
+  }, [clearOfflineTimer]);
+
   if (isInitializing) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -102,13 +304,13 @@ export default function App(): React.JSX.Element {
             <Text style={styles.loadingPeakGlyph}>▲</Text>
           </View>
           <Text style={styles.loadingTitle}>WAY UP!</Text>
-          <Text style={styles.loadingText}>Preparing Basecamp Gear...</Text>
+          <Text style={styles.loadingText}>Preparing Climbing Gear...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  // Dedicated full-viewport container during active gameplay so ScrollView never steals multi-touch controls
+  // Dedicated full-viewport container during Online PLAYING phase
   if (roomState && roomState.phase === 'PLAYING') {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -123,6 +325,7 @@ export default function App(): React.JSX.Element {
           </TouchableOpacity>
         )}
         <GameScreen
+          mode="ONLINE"
           roomState={roomState}
           playerId={playerId}
           livePlayers={livePlayers}
@@ -133,13 +336,35 @@ export default function App(): React.JSX.Element {
     );
   }
 
-  const isInRoom = roomState !== null;
+  // Dedicated full-viewport container during Offline PLAYING phase
+  if (offlinePhase === 'PLAYING' && offlineRoom) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" />
+        <GameScreen
+          mode="OFFLINE"
+          roomState={offlineRoom}
+          playerId={playerId}
+          livePlayers={[]}
+          onSendMove={() => {
+            // Local offline run requires no socket emits
+          }}
+          onOfflineFinish={handleOfflineFinished}
+          onLeaveRoom={exitOfflineMode}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  const isInOnlineRoom = roomState !== null;
+  const isInOfflineFlow = offlinePhase !== 'NONE';
+  const canEditProfile = !isInOnlineRoom && !isInOfflineFlow;
   const isConnected =
     connectionState === 'CONNECTED' || connectionState === 'IN_ROOM';
 
   const statusLabel =
     connectionState === 'IN_ROOM'
-      ? 'IN EXPEDITION'
+      ? 'IN LOBBY'
       : connectionState === 'CONNECTED'
       ? 'ONLINE'
       : connectionState === 'CONNECTING'
@@ -154,9 +379,8 @@ export default function App(): React.JSX.Element {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Atmospheric Alpine Hero Header */}
+        {/* Atmospheric Alpine Hero Header (Long-press WAY UP! ~1.2s for quiet Dev Info Modal) */}
         <View style={styles.heroBanner}>
-          {/* Pure-RN Star Dots & Layered Mountain Silhouettes */}
           <View style={[styles.starDot, { top: 14, left: 32 }]} />
           <View style={[styles.starDot, { top: 22, right: 86 }]} />
           <View style={[styles.starDot, { top: 12, right: 150 }]} />
@@ -167,7 +391,13 @@ export default function App(): React.JSX.Element {
           </View>
 
           <View style={styles.headerTopRow}>
-            <View style={styles.brandRow}>
+            <Pressable
+              delayLongPress={1200}
+              onLongPress={() => {
+                void handleOpenDevModal();
+              }}
+              style={styles.brandRow}
+            >
               <View style={styles.logoEmblem}>
                 <View style={styles.logoPeakShape} />
                 <View style={styles.logoSnowTip} />
@@ -176,7 +406,7 @@ export default function App(): React.JSX.Element {
                 <Text style={styles.appTitle}>WAY UP!</Text>
                 <Text style={styles.appSubtitle}>ALPINE SUMMIT RACE</Text>
               </View>
-            </View>
+            </Pressable>
 
             <View style={styles.connectionBadge}>
               <View
@@ -194,7 +424,7 @@ export default function App(): React.JSX.Element {
           </View>
         </View>
 
-        {/* Climber Profile Pill (replaces raw UUIDv4 dev banner; Info toggle reveals Guest ID) */}
+        {/* Tap-Anywhere Player Name Profile Pill (Subtle pencil icon ✎, no standalone Edit/Info buttons) */}
         {identity && (
           <View style={styles.profileCard}>
             {isEditingNickname ? (
@@ -232,101 +462,71 @@ export default function App(): React.JSX.Element {
                 </Pressable>
               </View>
             ) : (
-              <View style={styles.profileRow}>
-                {/* Pure-RN Mini Climber Helmet & Goggles Avatar */}
+              <Pressable
+                disabled={!canEditProfile}
+                style={({ pressed }) => [
+                  styles.profilePressableZone,
+                  pressed && canEditProfile && styles.profilePressableActive
+                ]}
+                onPress={() => {
+                  void HapticsService.selection();
+                  setNicknameDraft(identity.nickname);
+                  setNicknameError(null);
+                  setIsEditingNickname(true);
+                }}
+              >
                 <View style={styles.climberAvatar}>
                   <View style={styles.avatarHeadlamp} />
                   <View style={styles.avatarGoggles} />
                 </View>
 
                 <View style={styles.profileTextCol}>
-                  <Text style={styles.profileKicker}>CLIMBER PROFILE</Text>
-                  <Text style={styles.profileNickname} numberOfLines={1}>
-                    {identity.nickname}
-                  </Text>
-                </View>
-
-                <View style={styles.profileActions}>
-                  {!isInRoom && (
-                    <Pressable
-                      style={styles.editNicknameBtn}
-                      onPress={() => {
-                        void HapticsService.selection();
-                        setNicknameDraft(identity.nickname);
-                        setIsEditingNickname(true);
-                      }}
-                    >
-                      <Text style={styles.editNicknameText}>Edit</Text>
-                    </Pressable>
-                  )}
-
-                  <Pressable
-                    style={[
-                      styles.infoToggleBtn,
-                      showProfileInfo && styles.infoToggleBtnActive
-                    ]}
-                    onPress={() => {
-                      void HapticsService.selection();
-                      setShowProfileInfo((prev) => !prev);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.infoToggleText,
-                        showProfileInfo && styles.infoToggleTextActive
-                      ]}
-                    >
-                      Info
+                  <Text style={styles.profileKicker}>CLIMBER</Text>
+                  <View style={styles.nameWithPencilRow}>
+                    <Text style={styles.profileNickname} numberOfLines={1}>
+                      {identity.nickname}
                     </Text>
-                  </Pressable>
+                    {canEditProfile && (
+                      <Text style={styles.pencilGlyph}>✎</Text>
+                    )}
+                  </View>
                 </View>
-              </View>
+              </Pressable>
             )}
 
             {nicknameError && (
               <Text style={styles.nicknameErrorText}>{nicknameError}</Text>
             )}
-
-            {showProfileInfo && (
-              <View style={styles.devDrawer}>
-                <View style={styles.devInfoRow}>
-                  <Text style={styles.devInfoLabel}>GUEST ID (UUIDv4):</Text>
-                  <Text style={styles.devInfoMono} numberOfLines={1}>
-                    {identity.guestUuid}
-                  </Text>
-                </View>
-                <View style={styles.devInfoRow}>
-                  <Text style={styles.devInfoLabel}>SERVER:</Text>
-                  <Text style={styles.devInfoMono} numberOfLines={1}>
-                    {SERVER_URL} ({connectionState})
-                  </Text>
-                </View>
-              </View>
-            )}
           </View>
         )}
 
-        {/* Error Banner */}
-        {error && (
+        {/* Error Banner (when outside Join Modal) */}
+        {error && isInOnlineRoom && (
           <TouchableOpacity style={styles.errorBanner} onPress={clearError}>
             <Text style={styles.errorText}>{error}</Text>
             <Text style={styles.errorDismiss}>Dismiss</Text>
           </TouchableOpacity>
         )}
 
-        {/* Phase-Driven Screen Router */}
-        {!roomState && (
+        {/* Home Screen (when neither in Online room nor Offline results) */}
+        {!roomState && offlinePhase !== 'FINISHED' && (
           <LobbyScreen
             playerId={playerId}
             isConnecting={connectionState === 'CONNECTING'}
             isConnected={isConnected}
-            previewSeed={matchStartPayload?.seed ?? 424242}
-            onJoinOrCreateRoom={(code) =>
+            serverError={error}
+            onClearError={clearError}
+            onCreateOnlineRoom={() =>
+              joinOrCreateRoom(undefined, identity?.nickname)
+            }
+            onJoinOnlineRoom={(code) =>
               joinOrCreateRoom(code, identity?.nickname)
             }
+            onStartOfflineMatch={startOfflineRace}
           />
         )}
 
+        {/* Online Waiting Room */}
         {roomState &&
           (roomState.phase === 'WAITING' ||
             roomState.phase === 'COUNTDOWN') && (
@@ -340,6 +540,7 @@ export default function App(): React.JSX.Element {
             />
           )}
 
+        {/* Online Match Results */}
         {roomState && roomState.phase === 'FINISHED' && (
           <ResultsScreen
             roomState={roomState}
@@ -349,7 +550,87 @@ export default function App(): React.JSX.Element {
             onLeaveRoom={leaveRoom}
           />
         )}
+
+        {/* Offline Bot Race Results */}
+        {!roomState && offlinePhase === 'FINISHED' && offlineRoom && (
+          <ResultsScreen
+            isOffline
+            roomState={offlineRoom}
+            matchResult={offlineResult}
+            playerId={playerId}
+            onRematch={startOfflineRace}
+            onLeaveRoom={exitOfflineMode}
+          />
+        )}
       </ScrollView>
+
+      {/* Offline Quick 3-2-1 Countdown Modal */}
+      <Modal
+        visible={offlinePhase === 'COUNTDOWN'}
+        transparent
+        animationType="fade"
+        onRequestClose={exitOfflineMode}
+      >
+        <View style={styles.countdownBackdrop}>
+          <View style={styles.countdownCard}>
+            <Text style={styles.countdownKicker}>
+              OFFLINE RACE • VS 3 AI CLIMBERS
+            </Text>
+            <Text style={styles.countdownBigNumber}>{offlineCountdown}</Text>
+            <Text style={styles.countdownRivalsText}>
+              Rivals: FrostBot • CragHopper • PeakRunner
+            </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Quiet Long-Press Dev Info Modal (Grading & Technical Inspection) */}
+      <Modal
+        visible={showDevModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDevModal(false)}
+      >
+        <View style={styles.countdownBackdrop}>
+          <View style={styles.devModalCard}>
+            <Text style={styles.devModalKicker}>DIAGNOSTICS & GRADING INFO</Text>
+            <Text style={styles.devModalTitle}>Way Up! Client Inspector</Text>
+
+            <View style={styles.devRow}>
+              <Text style={styles.devKey}>Guest UUIDv4</Text>
+              <Text style={styles.devVal} selectable>
+                {identity?.guestUuid ?? 'N/A'}
+              </Text>
+            </View>
+
+            <View style={styles.devRow}>
+              <Text style={styles.devKey}>Server Endpoint</Text>
+              <Text style={styles.devVal} selectable>
+                {SERVER_URL}
+              </Text>
+            </View>
+
+            <View style={styles.devRow}>
+              <Text style={styles.devKey}>Socket State</Text>
+              <Text style={styles.devVal}>{connectionState}</Text>
+            </View>
+
+            <View style={styles.devRow}>
+              <Text style={styles.devKey}>SQLite Records</Text>
+              <Text style={styles.devVal}>
+                {sqliteRecordCount} saved in local_records
+              </Text>
+            </View>
+
+            <Pressable
+              style={styles.devCloseBtn}
+              onPress={() => setShowDevModal(false)}
+            >
+              <Text style={styles.devCloseBtnText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -536,24 +817,29 @@ const styles = StyleSheet.create({
   },
   profileCard: {
     backgroundColor: '#132036',
-    borderRadius: 15,
+    borderRadius: 16,
     paddingHorizontal: 13,
-    paddingVertical: 11,
+    paddingVertical: 10,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: '#263B59'
   },
-  profileRow: {
+  profilePressableZone: {
     flexDirection: 'row',
-    alignItems: 'center'
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 2
+  },
+  profilePressableActive: {
+    opacity: 0.78
   },
   climberAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#EA580C',
+    backgroundColor: '#3B82F6',
     borderWidth: 2,
-    borderColor: '#FDBA74',
+    borderColor: '#BAE6FD',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 11
@@ -571,11 +857,10 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#0F172A',
     borderWidth: 1,
-    borderColor: '#38BDF8'
+    borderColor: '#7DD3FC'
   },
   profileTextCol: {
-    flex: 1,
-    marginRight: 8
+    flex: 1
   },
   profileKicker: {
     fontSize: 9,
@@ -583,49 +868,22 @@ const styles = StyleSheet.create({
     color: '#64748B',
     letterSpacing: 0.8
   },
-  profileNickname: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#F8FAFC',
-    marginTop: 1
-  },
-  profileActions: {
+  nameWithPencilRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6
+    gap: 7,
+    marginTop: 1
   },
-  editNicknameBtn: {
-    backgroundColor: '#1E3A5F',
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#38BDF8'
+  profileNickname: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#F8FAFC',
+    flexShrink: 1
   },
-  editNicknameText: {
-    color: '#BAE6FD',
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  infoToggleBtn: {
-    backgroundColor: '#0B1424',
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#263B59'
-  },
-  infoToggleBtnActive: {
-    borderColor: '#7DD3FC',
-    backgroundColor: '#10243E'
-  },
-  infoToggleText: {
-    color: '#64748B',
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  infoToggleTextActive: {
-    color: '#7DD3FC'
+  pencilGlyph: {
+    fontSize: 14,
+    color: '#7DD3FC',
+    fontWeight: '700'
   },
   nicknameEditRow: {
     flexDirection: 'row',
@@ -672,30 +930,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontWeight: '600'
   },
-  devDrawer: {
-    marginTop: 10,
-    paddingTop: 9,
-    borderTopWidth: 1,
-    borderTopColor: '#1E314D',
-    gap: 4
-  },
-  devInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
-  },
-  devInfoLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#64748B',
-    width: 102
-  },
-  devInfoMono: {
-    flex: 1,
-    fontSize: 10,
-    fontFamily: 'monospace',
-    color: '#7DD3FC'
-  },
   errorBanner: {
     backgroundColor: '#7F1D1D',
     borderRadius: 12,
@@ -729,5 +963,94 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     marginLeft: 10
+  },
+  countdownBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 11, 22, 0.88)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24
+  },
+  countdownCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#13223A',
+    borderRadius: 22,
+    paddingVertical: 30,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#F59E0B'
+  },
+  countdownKicker: {
+    color: '#FBBF24',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.3
+  },
+  countdownBigNumber: {
+    color: '#FFFFFF',
+    fontSize: 80,
+    fontWeight: '900',
+    marginVertical: 8
+  },
+  countdownRivalsText: {
+    color: '#7DD3FC',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+  devModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#111D33',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+    gap: 10
+  },
+  devModalKicker: {
+    color: '#7DD3FC',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.2
+  },
+  devModalTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 4
+  },
+  devRow: {
+    backgroundColor: '#0A1220',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#1E314F'
+  },
+  devKey: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '800',
+    marginBottom: 2
+  },
+  devVal: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: '700'
+  },
+  devCloseBtn: {
+    marginTop: 6,
+    backgroundColor: '#1E293B',
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: 'center'
+  },
+  devCloseBtnText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '800'
   }
 });

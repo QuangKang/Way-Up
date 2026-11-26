@@ -458,7 +458,7 @@ function formatErrorMessage(code: ErrorPayload['code']): string {
     case 'GAME_ALREADY_STARTED':
       return 'Match is already in progress for this room.';
     case 'NOT_ENOUGH_PLAYERS':
-      return 'At least 1 player is required to start.';
+      return 'At least 2 climbers are required to start an online match.';
     case 'NOT_ALL_PLAYERS_READY':
       return 'All joined players must be Ready before starting.';
     case 'UNAUTHORIZED_NOT_HOST':

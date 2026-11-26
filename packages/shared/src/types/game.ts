@@ -3,7 +3,7 @@
  */
 
 export const GAME_CONSTANTS = {
-  MIN_PLAYERS: 1, // Allows 1-player Solo Test or 2-4 player multiplayer
+  MIN_PLAYERS: 2, // Online matches require at least 2 climbers (Offline mode handles solo + bots)
   MULTIPLAYER_MIN_PLAYERS: 2,
   MAX_PLAYERS: 4,
   ROOM_CODE_LENGTH: 4,

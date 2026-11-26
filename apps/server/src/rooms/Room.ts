@@ -230,7 +230,7 @@ export class Room {
       return { canStart: false, error: 'GAME_ALREADY_STARTED' };
     }
 
-    if (this.players.size < CONFIG.MIN_PLAYERS) {
+    if (this.players.size < Math.max(2, CONFIG.MIN_PLAYERS)) {
       return { canStart: false, error: 'NOT_ENOUGH_PLAYERS' };
     }
 

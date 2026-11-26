@@ -1,6 +1,7 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Player, RoomState } from '@climb/shared';
+import { HapticsService } from '../haptics/hapticsService';
 
 export interface WaitingRoomScreenProps {
   roomState: RoomState;
@@ -19,6 +20,8 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
   onStartMatch,
   onLeaveRoom
 }) => {
+  const [showShortHandedConfirm, setShowShortHandedConfirm] = useState(false);
+
   const selfPlayer = roomState.players.find((p) => p.id === playerId);
   const isHost = roomState.hostId === playerId || (selfPlayer?.isHost ?? false);
   const isCountingDown =
@@ -27,20 +30,41 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
 
   const readyCount = roomState.players.filter((p) => p.isReady).length;
   const totalCount = roomState.players.length;
-  const allReady = totalCount >= 1 && readyCount === totalCount;
-  const canStart = isHost && allReady && !isCountingDown;
+  const allReady = totalCount >= 2 && readyCount === totalCount;
+  const isSoloWaiting = totalCount < 2;
+  const canHostPressStart = isHost && totalCount >= 2 && allReady && !isCountingDown;
 
   const emptySlotsCount = Math.max(0, roomState.maxPlayers - totalCount);
   const emptySlots = Array.from({ length: emptySlotsCount }, (_, idx) => idx);
 
+  // Close confirmation popup automatically if roster drops below 2, unreadies, or starts countdown
+  useEffect(() => {
+    if (!canHostPressStart || totalCount >= 4) {
+      setShowShortHandedConfirm(false);
+    }
+  }, [canHostPressStart, totalCount]);
+
   const getStartButtonLabel = (): string => {
+    if (isSoloWaiting) {
+      return 'Need 2+ Climbers to Start';
+    }
     if (!allReady) {
-      return `Waiting for Crew (${readyCount}/${totalCount} Ready)`;
+      return `Waiting for Ready (${readyCount}/${totalCount})`;
     }
-    if (totalCount === 1) {
-      return '▲ Launch Solo Ascent';
+    return `▲ Start Match (${totalCount}/${roomState.maxPlayers} Climbers)`;
+  };
+
+  const handlePressStart = () => {
+    if (!canHostPressStart) return;
+    void HapticsService.selection();
+
+    if (totalCount === 2 || totalCount === 3) {
+      setShowShortHandedConfirm(true);
+      return;
     }
-    return `▲ Launch Ascent (${totalCount} Climbers)`;
+
+    // 4/4 climbers ready -> start immediately with no modal
+    onStartMatch();
   };
 
   return (
@@ -49,7 +73,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       <View style={styles.codeBanner}>
         <View style={styles.peakSilhouetteLeft} />
         <View style={styles.peakSilhouetteRight} />
-        <Text style={styles.codeLabel}>EXPEDITION ROOM CODE</Text>
+        <Text style={styles.codeLabel}>ONLINE ROOM CODE</Text>
         <Text style={styles.codeValue}>{roomState.code}</Text>
         <View style={styles.metaPillRow}>
           <View style={styles.metaPill}>
@@ -70,7 +94,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
         <View style={styles.rosterHeader}>
           <Text style={styles.rosterTitle}>CLIMBING CREW</Text>
           <Text style={styles.rosterProgress}>
-            {readyCount}/{totalCount} Rope-Ready
+            {readyCount}/{totalCount} Ready
           </Text>
         </View>
 
@@ -82,7 +106,6 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                 key={player.id}
                 style={[styles.playerSlot, isSelf && styles.playerSlotSelf]}
               >
-                {/* Mini Climber Helmet Swatch */}
                 <View
                   style={[
                     styles.helmetBadge,
@@ -97,12 +120,12 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                     {player.nickname} {isSelf ? '(You)' : ''}
                   </Text>
                   <Text style={styles.slotCaption}>
-                    Climber #{index + 1} • Rope Team
+                    Climber #{index + 1} • Online Race
                   </Text>
                 </View>
 
                 <View style={styles.badgeGroup}>
-                  {player.isHost && <Text style={styles.hostBadge}>LEAD</Text>}
+                  {player.isHost && <Text style={styles.hostBadge}>HOST</Text>}
                   <Text
                     style={[
                       styles.readyBadge,
@@ -125,14 +148,14 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             >
               <View style={styles.emptyDot} />
               <Text style={styles.emptySlotText}>
-                Open Rope Slot #{totalCount + slotOffset + 1} — Share{' '}
+                Open Slot #{totalCount + slotOffset + 1} — Share code{' '}
                 {roomState.code}
               </Text>
             </View>
           ))}
         </View>
 
-        {/* Tactile Controls */}
+        {/* Controls */}
         <View style={styles.controlsColumn}>
           <Pressable
             style={({ pressed }) => [
@@ -146,30 +169,38 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
           >
             <Text style={styles.buttonText}>
               {selfPlayer?.isReady
-                ? '✓ Gear Checked (Tap to Stand Down)'
-                : 'Check Gear — Ready Up!'}
+                ? '✓ Ready (Tap to Unready)'
+                : 'Ready Up!'}
             </Text>
           </Pressable>
 
           {isHost ? (
-            <Pressable
-              style={({ pressed }) => [
-                styles.button,
-                styles.startMatchBtn,
-                !canStart && styles.buttonDisabled,
-                pressed && canStart && styles.buttonPressed
-              ]}
-              disabled={!canStart}
-              onPress={onStartMatch}
-            >
-              <Text style={styles.buttonText}>{getStartButtonLabel()}</Text>
-            </Pressable>
+            <View>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.button,
+                  styles.startMatchBtn,
+                  !canHostPressStart && styles.startBtnTranslucentDisabled,
+                  pressed && canHostPressStart && styles.buttonPressed
+                ]}
+                disabled={!canHostPressStart}
+                onPress={handlePressStart}
+              >
+                <Text style={styles.buttonText}>{getStartButtonLabel()}</Text>
+              </Pressable>
+              {isSoloWaiting && (
+                <Text style={styles.soloHelperText}>
+                  Share room code {roomState.code} — need 2+ climbers to start
+                  online (or use Offline mode for solo play).
+                </Text>
+              )}
+            </View>
           ) : (
             <View style={styles.guestNoticeBox}>
               <Text style={styles.guestNoticeText}>
                 {allReady
-                  ? 'All climbers roped in! Waiting for Expedition Lead to launch...'
-                  : 'Tap "Ready Up!" so the Expedition Lead can start the ascent.'}
+                  ? 'All climbers ready! Waiting for Host to start...'
+                  : 'Tap "Ready Up!" so the Host can start the ascent.'}
               </Text>
             </View>
           )}
@@ -183,24 +214,70 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             disabled={isCountingDown}
             onPress={onLeaveRoom}
           >
-            <Text style={styles.leaveBtnText}>Leave Basecamp</Text>
+            <Text style={styles.leaveBtnText}>Leave Room</Text>
           </Pressable>
         </View>
       </View>
+
+      {/* 2–3 Player Confirmation Popup Modal */}
+      <Modal
+        visible={showShortHandedConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowShortHandedConfirm(false)}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={styles.confirmModal}>
+            <Text style={styles.confirmKicker}>ROSTER CHECK</Text>
+            <Text style={styles.confirmTitle}>
+              Not enough players ({totalCount}/4). Still want to start?
+            </Text>
+            <Text style={styles.confirmSub}>
+              You can wait for more climbers to join with code {roomState.code}{' '}
+              or launch the race right now.
+            </Text>
+
+            <View style={styles.confirmBtnRow}>
+              <Pressable
+                style={styles.confirmCancelBtn}
+                onPress={() => {
+                  void HapticsService.selection();
+                  setShowShortHandedConfirm(false);
+                }}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.confirmStartBtn,
+                  pressed && styles.buttonPressed
+                ]}
+                onPress={() => {
+                  void HapticsService.selection();
+                  setShowShortHandedConfirm(false);
+                  onStartMatch();
+                }}
+              >
+                <Text style={styles.confirmStartText}>Start Anyway</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Live 3-2-1 Countdown Overlay */}
       {isCountingDown && (
         <View style={styles.countdownOverlay}>
           <View style={styles.countdownModal}>
-            <Text style={styles.countdownTitle}>ROPES LOCKED • CLIMB!</Text>
+            <Text style={styles.countdownTitle}>GET READY TO CLIMB!</Text>
             <Text style={styles.countdownNumber}>
               {activeCountdown !== null && activeCountdown > 0
                 ? activeCountdown
                 : 'GO!'}
             </Text>
             <Text style={styles.countdownSub}>
-              Summit Target: {roomState.targetHeight}m • Route #
-              {roomState.seed.toString(16).toUpperCase().slice(0, 6)}
+              Summit Target: {roomState.targetHeight}m
             </Text>
           </View>
         </View>
@@ -421,6 +498,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#EA580C',
     borderBottomColor: '#9A3412'
   },
+  startBtnTranslucentDisabled: {
+    opacity: 0.35
+  },
+  soloHelperText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 16
+  },
   leaveBtn: {
     paddingVertical: 13,
     borderRadius: 12,
@@ -458,6 +546,75 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center'
+  },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 11, 22, 0.86)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 22
+  },
+  confirmModal: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#13223A',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B'
+  },
+  confirmKicker: {
+    color: '#FBBF24',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.2
+  },
+  confirmTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 4,
+    lineHeight: 24
+  },
+  confirmSub: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 6,
+    marginBottom: 18,
+    lineHeight: 18,
+    fontWeight: '600'
+  },
+  confirmBtnRow: {
+    flexDirection: 'row',
+    gap: 10
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  confirmCancelText: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  confirmStartBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#EA580C',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 4,
+    borderBottomColor: '#9A3412'
+  },
+  confirmStartText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900'
   },
   countdownOverlay: {
     position: 'absolute',

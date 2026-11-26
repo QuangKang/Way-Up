@@ -9,6 +9,7 @@ import { saveLocalRecord } from '../db/scoreService';
 import { HapticsService } from '../haptics/hapticsService';
 
 export interface ResultsScreenProps {
+  isOffline?: boolean;
   roomState: RoomState;
   matchResult: MatchFinishedPayload | null;
   playerId: string;
@@ -34,6 +35,7 @@ function getOrdinalLabel(rank: number): string {
 }
 
 export const ResultsScreen: React.FC<ResultsScreenProps> = ({
+  isOffline = false,
   roomState,
   matchResult,
   playerId,
@@ -124,7 +126,6 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
   const winner = rankings[0];
   const isSelfWinner = winner?.playerId === playerId;
-  const seedShort = activeSeed.toString(16).toUpperCase().padStart(8, '0');
 
   return (
     <View style={styles.card}>
@@ -132,21 +133,22 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       <View style={styles.banner}>
         <View style={styles.bannerPeakBg} />
         <Text style={styles.kicker}>
-          EXPEDITION COMPLETE • ROOM {roomState.code}
+          {isOffline
+            ? 'OFFLINE RACE • VS AI CLIMBERS'
+            : `ONLINE STANDINGS • ROOM ${roomState.code}`}
         </Text>
         <Text style={styles.headline}>
           {isSelfWinner
             ? '🏆 SUMMIT CHAMPION!'
             : winner
-            ? `🏆 ${winner.nickname} Conquered the Peak!`
+            ? `🏆 ${winner.nickname} Reached the Peak!`
             : 'Ascent Complete'}
         </Text>
-        <View style={styles.metaBadgeRow}>
-          <Text style={styles.seedPill}>Route #{seedShort.slice(0, 6)}</Text>
-          {savedToSqlite && (
-            <Text style={styles.savedPill}>✓ Logbook Saved</Text>
-          )}
-        </View>
+        {savedToSqlite && (
+          <View style={styles.metaBadgeRow}>
+            <Text style={styles.savedPill}>✓ Personal Record Saved</Text>
+          </View>
+        )}
       </View>
 
       {/* Ranked Podium (1st - 4th) */}
@@ -157,7 +159,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
           const resultPrimary = finished
             ? `${(entry.finishTimeMs! / 1000).toFixed(2)}s`
             : `${Math.round(entry.height)}m`;
-          const resultCaption = finished ? 'SUMMIT TIME' : 'MAX ALTITUDE';
+          const resultCaption = finished ? 'SUMMIT TIME' : 'ALTITUDE';
 
           return (
             <View
@@ -226,7 +228,9 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onRematch();
           }}
         >
-          <Text style={styles.rematchText}>▲ Climb Again (Rematch)</Text>
+          <Text style={styles.rematchText}>
+            {isOffline ? '▲ Play Again' : '▲ Play Again (Rematch)'}
+          </Text>
         </Pressable>
 
         <Pressable
@@ -239,7 +243,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onLeaveRoom();
           }}
         >
-          <Text style={styles.leaveText}>Back to Lobby</Text>
+          <Text style={styles.leaveText}>Back to Home</Text>
         </Pressable>
       </View>
     </View>
@@ -292,17 +296,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     marginTop: 2
-  },
-  seedPill: {
-    backgroundColor: '#13223A',
-    color: '#7DD3FC',
-    fontSize: 11,
-    fontWeight: '800',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#294266'
   },
   savedPill: {
     backgroundColor: '#064E3B',

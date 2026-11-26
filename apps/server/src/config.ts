@@ -25,8 +25,8 @@ export const CONFIG: ServerConfig = {
   ROOM_CODE_LENGTH: 4,
   // 4-character codes omitting visually ambiguous characters (0, O, 1, I)
   ROOM_CODE_CHARS: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
-  // Allow 1 player for "Solo Test" runs, or 2-4 players for multiplayer
-  MIN_PLAYERS: 1,
+  // Online multiplayer requires 2-4 players (solo play runs locally in Offline mode)
+  MIN_PLAYERS: 2,
   MAX_PLAYERS: 4,
   DEFAULT_TARGET_HEIGHT: 500,
   DEFAULT_GOAL_HEIGHT: 500,
