@@ -5,6 +5,7 @@ import {
   ErrorPayload,
   MatchCountdownPayload,
   MatchFinishedPayload,
+  MatchSettings,
   MatchStartedPayload,
   MatchStatePayload,
   PlayerMoveAction,
@@ -14,7 +15,7 @@ import {
   SanitizedPlayerPosition,
   ServerToClientEvents
 } from '@climb/shared';
-import { HapticsService } from '../haptics/hapticsService';
+import { SoundService } from '../services/soundService';
 
 export type ConnectionState =
   | 'DISCONNECTED'
@@ -26,6 +27,7 @@ export interface UseMultiplayerLobbyOptions {
   serverUrl?: string;
   playerId: string;
   playerName: string;
+  preferredColor?: string;
 }
 
 export interface MoveSubmission {
@@ -44,7 +46,13 @@ export interface UseMultiplayerLobbyResult {
   livePlayers: SanitizedPlayerPosition[];
   matchResult: MatchFinishedPayload | null;
   error: string | null;
-  joinOrCreateRoom: (roomCode?: string, overrideNickname?: string) => void;
+  joinOrCreateRoom: (
+    roomCode?: string,
+    overrideNickname?: string,
+    overrideColor?: string
+  ) => void;
+  selectPlayerColor: (color: string) => void;
+  updateRoomSettings: (settings: Partial<MatchSettings>) => void;
   toggleReady: () => void;
   startMatch: () => void;
   sendPlayerMove: (move: MoveSubmission) => void;
@@ -58,7 +66,8 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 export function useMultiplayerLobby({
   serverUrl = process.env.EXPO_PUBLIC_SERVER_URL ?? 'http://localhost:3001',
   playerId,
-  playerName
+  playerName,
+  preferredColor
 }: UseMultiplayerLobbyOptions): UseMultiplayerLobbyResult {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>('DISCONNECTED');
@@ -77,6 +86,7 @@ export function useMultiplayerLobby({
   const sequenceRef = useRef<number>(0);
   const playerIdRef = useRef<string>(playerId);
   const playerNameRef = useRef<string>(playerName);
+  const preferredColorRef = useRef<string | undefined>(preferredColor);
 
   useEffect(() => {
     playerIdRef.current = playerId;
@@ -85,6 +95,10 @@ export function useMultiplayerLobby({
   useEffect(() => {
     playerNameRef.current = playerName;
   }, [playerName]);
+
+  useEffect(() => {
+    preferredColorRef.current = preferredColor;
+  }, [preferredColor]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -134,7 +148,7 @@ export function useMultiplayerLobby({
       setCountdownSeconds(payload.room.countdownRemaining);
       setConnectionState('IN_ROOM');
       syncPlayersFromRoom(payload.room);
-      void HapticsService.selection();
+      SoundService.play('ui_tap');
     });
 
     socket.on('ROOM_UPDATED', (payload) => {
@@ -152,6 +166,8 @@ export function useMultiplayerLobby({
         syncPlayersFromRoom(payload.room);
       } else if (payload.room.phase === 'COUNTDOWN') {
         setCountdownSeconds(payload.room.countdownRemaining);
+      } else if (payload.changeReason === 'PLAYER_FINISHED') {
+        syncPlayersFromRoom(payload.room);
       }
 
       if (
@@ -160,14 +176,14 @@ export function useMultiplayerLobby({
         payload.changeReason === 'HOST_TRANSFERRED' ||
         payload.changeReason === 'REMATCH_RESET'
       ) {
-        void HapticsService.selection();
+        SoundService.play('ui_tap');
       }
     });
 
     socket.on('match:countdown', (payload: MatchCountdownPayload) => {
       setCountdownSeconds(payload.secondsRemaining);
       setMatchResult(null);
-      void HapticsService.warning();
+      SoundService.play('countdown_tick');
     });
 
     socket.on('match:started', (payload: MatchStartedPayload) => {
@@ -176,7 +192,7 @@ export function useMultiplayerLobby({
       setRoomState(payload.room);
       syncPlayersFromRoom(payload.room);
       sequenceRef.current = 0;
-      void HapticsService.springBoost();
+      SoundService.play('match_go');
     });
 
     socket.on('ROOM_START', (payload) => {
@@ -194,15 +210,15 @@ export function useMultiplayerLobby({
       syncPlayersFromRoom(payload.room);
 
       if (payload.winnerId === playerIdRef.current) {
-        void HapticsService.victory();
+        SoundService.play('summit_victory');
       } else {
-        void HapticsService.selection();
+        SoundService.play('ui_tap');
       }
     });
 
     socket.on('ERROR', (payload: ErrorPayload) => {
       setError(payload.message);
-      void HapticsService.defeat();
+      SoundService.play('slip_fall');
     });
 
     return () => {
@@ -212,7 +228,11 @@ export function useMultiplayerLobby({
   }, [serverUrl, syncPlayersFromRoom]);
 
   const joinOrCreateRoom = useCallback(
-    (roomCode?: string, overrideNickname?: string) => {
+    (
+      roomCode?: string,
+      overrideNickname?: string,
+      overrideColor?: string
+    ) => {
       if (!socketRef.current || !socketRef.current.connected) {
         setError('Not connected to game server. Check Wi-Fi and server status.');
         return;
@@ -226,7 +246,8 @@ export function useMultiplayerLobby({
           playerId: playerIdRef.current,
           playerName: activeName,
           nickname: activeName,
-          roomCode: roomCode?.trim().toUpperCase()
+          roomCode: roomCode?.trim().toUpperCase(),
+          preferredColor: overrideColor ?? preferredColorRef.current
         },
         (response) => {
           if (!response.success && response.error) {
@@ -236,6 +257,50 @@ export function useMultiplayerLobby({
       );
     },
     [clearError]
+  );
+
+  const selectPlayerColor = useCallback(
+    (color: string) => {
+      if (!socketRef.current || !roomState) return;
+      clearError();
+
+      socketRef.current.emit(
+        'player:select_color',
+        {
+          roomCode: roomState.code,
+          playerId: playerIdRef.current,
+          color
+        },
+        (response) => {
+          if (!response.success && response.error) {
+            setError(response.error.message);
+          }
+        }
+      );
+    },
+    [roomState, clearError]
+  );
+
+  const updateRoomSettings = useCallback(
+    (settings: Partial<MatchSettings>) => {
+      if (!socketRef.current || !roomState) return;
+      clearError();
+
+      socketRef.current.emit(
+        'room:update_settings',
+        {
+          roomCode: roomState.code,
+          playerId: playerIdRef.current,
+          settings
+        },
+        (response) => {
+          if (!response.success && response.error) {
+            setError(response.error.message);
+          }
+        }
+      );
+    },
+    [roomState, clearError]
   );
 
   const toggleReady = useCallback(() => {
@@ -249,7 +314,7 @@ export function useMultiplayerLobby({
       playerId: playerIdRef.current,
       isReady: !self.isReady
     });
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
   }, [roomState, clearError]);
 
   const startMatch = useCallback(() => {
@@ -326,7 +391,7 @@ export function useMultiplayerLobby({
     if (socketRef.current?.connected) {
       setConnectionState('CONNECTED');
     }
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
   }, [roomState]);
 
   return {
@@ -339,6 +404,8 @@ export function useMultiplayerLobby({
     matchResult,
     error,
     joinOrCreateRoom,
+    selectPlayerColor,
+    updateRoomSettings,
     toggleReady,
     startMatch,
     sendPlayerMove,

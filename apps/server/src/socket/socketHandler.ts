@@ -14,9 +14,11 @@ import {
   PlayerReadyPayload,
   RoomLeavePayload,
   RoomStartRequestPayload,
+  SelectPlayerColorPayload,
   ServerToClientEvents,
   SetReadyPayload,
-  SocketData
+  SocketData,
+  UpdateRoomSettingsPayload
 } from '@climb/shared';
 import { Room } from '../rooms/Room';
 import { RoomManager } from '../rooms/RoomManager';
@@ -44,7 +46,7 @@ export function registerSocketHandlers(io: GameServer): void {
     // JOIN_ROOM (Creates 4-char room when roomCode omitted, or joins)
     // -------------------------------------------------------------
     socket.on('JOIN_ROOM', (payload: JoinRoomPayload, callback) => {
-      const { playerId, roomCode } = payload;
+      const { playerId, roomCode, preferredColor } = payload;
       const rawName = payload.nickname ?? payload.playerName;
 
       if (!playerId || !rawName || rawName.trim() === '') {
@@ -57,7 +59,6 @@ export function registerSocketHandlers(io: GameServer): void {
         return;
       }
 
-      // If switching rooms on the same socket, leave previous Socket.IO room channel cleanly
       const previousRoomCode = socket.data.roomCode;
       if (
         previousRoomCode &&
@@ -70,7 +71,8 @@ export function registerSocketHandlers(io: GameServer): void {
       const result = roomManager.joinOrCreateRoom(
         playerId,
         trimmedName,
-        roomCode
+        roomCode,
+        preferredColor
       );
 
       if (!result.success || !result.room) {
@@ -110,16 +112,90 @@ export function registerSocketHandlers(io: GameServer): void {
         assignedColor: player.color
       };
 
-      // Acknowledge the joining client
       socket.emit('ROOM_JOINED', joinedResponse);
       callback?.({ success: true, data: joinedResponse });
 
-      // Broadcast full room snapshot to all clients in the room
       io.to(room.code).emit('ROOM_UPDATED', {
         room: snapshot,
         changeReason: 'PLAYER_JOINED'
       });
     });
+
+    // -------------------------------------------------------------
+    // player:select_color (Server-Enforced Unique Climber Color)
+    // -------------------------------------------------------------
+    socket.on(
+      'player:select_color',
+      (payload: SelectPlayerColorPayload, callback) => {
+        const room = roomManager.getRoom(payload.roomCode);
+        if (!room) {
+          const error: ErrorPayload = {
+            code: 'ROOM_NOT_FOUND',
+            message: formatErrorMessage('ROOM_NOT_FOUND')
+          };
+          socket.emit('ERROR', error);
+          callback?.({ success: false, error });
+          return;
+        }
+
+        const result = room.selectPlayerColor(payload.playerId, payload.color);
+        if (!result.success) {
+          const errorCode = result.error ?? 'INTERNAL_ERROR';
+          const error: ErrorPayload = {
+            code: errorCode,
+            message: formatErrorMessage(errorCode)
+          };
+          socket.emit('ERROR', error);
+          callback?.({ success: false, error });
+          return;
+        }
+
+        const snapshot = room.toState();
+        io.to(room.code).emit('ROOM_UPDATED', {
+          room: snapshot,
+          changeReason: 'COLOR_CHANGED'
+        });
+        callback?.({ success: true, data: snapshot });
+      }
+    );
+
+    // -------------------------------------------------------------
+    // room:update_settings (Host Pre-Game Match Customization)
+    // -------------------------------------------------------------
+    socket.on(
+      'room:update_settings',
+      (payload: UpdateRoomSettingsPayload, callback) => {
+        const room = roomManager.getRoom(payload.roomCode);
+        if (!room) {
+          const error: ErrorPayload = {
+            code: 'ROOM_NOT_FOUND',
+            message: formatErrorMessage('ROOM_NOT_FOUND')
+          };
+          socket.emit('ERROR', error);
+          callback?.({ success: false, error });
+          return;
+        }
+
+        const result = room.updateSettings(payload.playerId, payload.settings);
+        if (!result.success) {
+          const errorCode = result.error ?? 'INTERNAL_ERROR';
+          const error: ErrorPayload = {
+            code: errorCode,
+            message: formatErrorMessage(errorCode)
+          };
+          socket.emit('ERROR', error);
+          callback?.({ success: false, error });
+          return;
+        }
+
+        const snapshot = room.toState();
+        io.to(room.code).emit('ROOM_UPDATED', {
+          room: snapshot,
+          changeReason: 'SETTINGS_UPDATED'
+        });
+        callback?.({ success: true, data: snapshot });
+      }
+    );
 
     // -------------------------------------------------------------
     // player:ready & SET_READY
@@ -363,7 +439,6 @@ export function registerSocketHandlers(io: GameServer): void {
             room: startedPayload.room,
             changeReason: 'MATCH_STARTED'
           });
-          // Broadcast initial sanitized player positions
           io.to(room.code).emit('match:state', room.toMatchState());
         },
         onTimeLimit: () => {
@@ -387,11 +462,19 @@ export function registerSocketHandlers(io: GameServer): void {
       return;
     }
 
-    if (moveResult.reachedTarget || moveResult.allFinished) {
-      const finishReason: MatchFinishReason = moveResult.allFinished
-        ? 'ALL_FINISHED'
-        : 'TARGET_REACHED';
-      concludeRoomMatch(room, finishReason);
+    // Only end the match once ALL active climbers reach 500m (or when timeLimitSec hits 0)
+    if (moveResult.allFinished) {
+      concludeRoomMatch(room, 'ALL_FINISHED');
+      return;
+    }
+
+    // When an individual climber reaches 500m first, broadcast immediately so rivals see them at the summit
+    if (moveResult.reachedTarget) {
+      io.to(room.code).emit('match:state', room.toMatchState());
+      io.to(room.code).emit('ROOM_UPDATED', {
+        room: room.toState(),
+        changeReason: 'PLAYER_FINISHED'
+      });
       return;
     }
 
@@ -403,7 +486,6 @@ export function registerSocketHandlers(io: GameServer): void {
   function concludeRoomMatch(room: Room, reason: MatchFinishReason): void {
     if (room.phase !== 'PLAYING') return;
 
-    // Flush final sanitized state before closing the match
     const finalState = room.toMatchState();
     const finishedPayload = room.finishMatch(reason);
 
@@ -462,7 +544,11 @@ function formatErrorMessage(code: ErrorPayload['code']): string {
     case 'NOT_ALL_PLAYERS_READY':
       return 'All joined players must be Ready before starting.';
     case 'UNAUTHORIZED_NOT_HOST':
-      return 'Only the room Host can start the match.';
+      return 'Only the room Host can perform this action.';
+    case 'COLOR_ALREADY_TAKEN':
+      return 'That climber color is already taken by another player.';
+    case 'INVALID_COLOR':
+      return 'Invalid climber color selection.';
     case 'INVALID_ROOM_CODE':
       return 'Room code must be 4 characters.';
     default:

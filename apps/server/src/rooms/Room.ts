@@ -1,19 +1,24 @@
 import {
+  CLIMBER_COLORS,
+  DEFAULT_MATCH_SETTINGS,
+  ErrorPayload,
   GAME_CONSTANTS,
   generateRandomSeed,
+  isValidClimberColor,
   MatchConfig,
   MatchCountdownPayload,
   MatchFinishedPayload,
   MatchFinishReason,
   MatchRankingEntry,
+  MatchSettings,
   MatchStartedPayload,
   MatchStatePayload,
   Player,
-  PlayerColor,
   PlayerMovePayload,
   RoomPhase,
   RoomState,
-  SanitizedPlayerPosition
+  SanitizedPlayerPosition,
+  sanitizeMatchSettings
 } from '@climb/shared';
 import { CONFIG } from '../config';
 
@@ -36,6 +41,7 @@ export class Room {
   public phase: RoomPhase = 'WAITING';
   public seed: number = 0;
   public targetHeight: number = CONFIG.DEFAULT_TARGET_HEIGHT;
+  public settings: MatchSettings = { ...DEFAULT_MATCH_SETTINGS };
   public countdownRemaining: number | null = null;
   public readonly createdAt: number = Date.now();
   public startedAt: number | null = null;
@@ -48,18 +54,25 @@ export class Room {
   private lastStateBroadcastAt: number = 0;
   private readonly moveTrackers: Map<string, PlayerMoveTracker> = new Map();
 
-  constructor(code: string, hostPlayerId: string, hostNickname: string) {
+  constructor(
+    code: string,
+    hostPlayerId: string,
+    hostNickname: string,
+    preferredColor?: string
+  ) {
     this.code = code.toUpperCase();
     this.hostId = hostPlayerId;
 
     const cleanName = hostNickname.trim();
+    const initialColor = this.pickAvailableColor(preferredColor);
+
     const hostPlayer: Player = {
       id: hostPlayerId,
       nickname: cleanName,
       name: cleanName,
       isHost: true,
       isReady: true,
-      color: GAME_CONSTANTS.PLAYER_COLORS[0],
+      color: initialColor,
       height: 0,
       x: GAME_CONSTANTS.WORLD_WIDTH * 0.5,
       y: 0,
@@ -84,7 +97,8 @@ export class Room {
     return {
       seed: this.seed,
       targetHeight: this.targetHeight,
-      countdownSec: CONFIG.COUNTDOWN_SECONDS
+      countdownSec: CONFIG.COUNTDOWN_SECONDS,
+      settings: { ...this.settings }
     };
   }
 
@@ -106,7 +120,8 @@ export class Room {
 
   public addPlayer(
     playerId: string,
-    playerName: string
+    playerName: string,
+    preferredColor?: string
   ): { success: boolean; player?: Player; error?: string } {
     const cleanName = playerName.trim();
 
@@ -114,6 +129,14 @@ export class Room {
       const existing = this.players.get(playerId)!;
       existing.nickname = cleanName;
       existing.name = cleanName;
+      if (
+        this.phase === 'WAITING' &&
+        preferredColor &&
+        isValidClimberColor(preferredColor) &&
+        !this.isColorClaimedByAnother(preferredColor, playerId)
+      ) {
+        existing.color = preferredColor;
+      }
       return { success: true, player: existing };
     }
 
@@ -125,7 +148,7 @@ export class Room {
       return { success: false, error: 'GAME_ALREADY_STARTED' };
     }
 
-    const assignedColor = this.getNextAvailableColor();
+    const assignedColor = this.pickAvailableColor(preferredColor);
     const isFirstPlayer = this.players.size === 0;
 
     if (isFirstPlayer) {
@@ -150,6 +173,47 @@ export class Room {
 
     this.players.set(playerId, newPlayer);
     return { success: true, player: newPlayer };
+  }
+
+  public selectPlayerColor(
+    playerId: string,
+    requestedColor: string
+  ): { success: boolean; error?: ErrorPayload['code'] } {
+    if (this.phase !== 'WAITING') {
+      return { success: false, error: 'INVALID_ROOM_PHASE' };
+    }
+
+    const player = this.players.get(playerId);
+    if (!player) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (!isValidClimberColor(requestedColor)) {
+      return { success: false, error: 'INVALID_COLOR' };
+    }
+
+    if (this.isColorClaimedByAnother(requestedColor, playerId)) {
+      return { success: false, error: 'COLOR_ALREADY_TAKEN' };
+    }
+
+    player.color = requestedColor;
+    return { success: true };
+  }
+
+  public updateSettings(
+    requesterId: string,
+    partialSettings: Partial<MatchSettings>
+  ): { success: boolean; error?: ErrorPayload['code'] } {
+    if (this.hostId !== requesterId) {
+      return { success: false, error: 'UNAUTHORIZED_NOT_HOST' };
+    }
+
+    if (this.phase !== 'WAITING') {
+      return { success: false, error: 'INVALID_ROOM_PHASE' };
+    }
+
+    this.settings = sanitizeMatchSettings(partialSettings, this.settings);
+    return { success: true };
   }
 
   public removePlayer(playerId: string): {
@@ -195,6 +259,7 @@ export class Room {
       countdownAborted = true;
     }
 
+    // If a climber disconnects mid-match, check whether all remaining climbers have already reached 500m
     const shouldFinishMatch =
       this.phase === 'PLAYING' && this.areAllPlayersFinished();
 
@@ -326,11 +391,17 @@ export class Room {
       });
     }
 
+    const authoritativeTimeLimitMs =
+      Math.max(
+        CONFIG.MIN_TIME_LIMIT_SEC,
+        Math.min(CONFIG.MAX_TIME_LIMIT_SEC, this.settings.timeLimitSec)
+      ) * 1000;
+
     this.matchTimeout = setTimeout(() => {
       if (this.phase === 'PLAYING') {
         onTimeLimit();
       }
-    }, CONFIG.MATCH_TIME_LIMIT_MS);
+    }, authoritativeTimeLimitMs);
 
     return {
       roomCode: this.code,
@@ -344,9 +415,8 @@ export class Room {
 
   /**
    * Server-authoritative validation for incoming `player:move` packets.
-   * Uses a rolling burst-allowance bucket calibrated for rapid Left/Right rhythm
-   * tapping (~60-80m/s) and recoverable falls (-20m / -30m), while rejecting
-   * upward teleports and speed-hack bursts.
+   * When a climber reaches `targetHeight`, locks their `status = 'FINISHED'` and
+   * exact elapsed `finishTimeMs = now - startedAt` while letting remaining climbers continue.
    */
   public applyPlayerMove(payload: PlayerMovePayload): {
     accepted: boolean;
@@ -408,7 +478,6 @@ export class Room {
     const heightDelta = clampedHeight - player.height;
 
     if (heightDelta > 0) {
-      // Reject single-packet upward teleports or sustained speed-hack bursts
       if (
         heightDelta > CONFIG.MAX_STEP_HEIGHT_DELTA ||
         heightDelta > refilledAllowance
@@ -422,7 +491,6 @@ export class Room {
       }
       tracker.burstAllowance = refilledAllowance - heightDelta;
     } else {
-      // Downward falls (-20m wrong tap / slippery ledge slide, -30m boulder hit) are always valid
       tracker.burstAllowance = refilledAllowance;
     }
 
@@ -442,7 +510,7 @@ export class Room {
       player.height = this.targetHeight;
       player.y = this.targetHeight;
       player.status = 'FINISHED';
-      player.finishTimeMs = Math.max(0, now - startEpoch);
+      player.finishTimeMs = Math.max(1, now - startEpoch);
     } else if (payload.action === 'STUN' || payload.status === 'STUNNED') {
       player.status = 'STUNNED';
     } else if (payload.action === 'IDLE' && payload.status === 'IDLE') {
@@ -498,6 +566,7 @@ export class Room {
     this.phase = 'FINISHED';
     this.finishedAt = now;
 
+    // Sort finishers by actual elapsed climb time ascending, then unfinished climbers by height descending
     const sortedPlayers = this.getAllPlayers().sort((a, b) => {
       if (a.finishTimeMs !== null && b.finishTimeMs !== null) {
         return a.finishTimeMs - b.finishTimeMs;
@@ -555,6 +624,8 @@ export class Room {
     const now = Date.now();
     const elapsedMs =
       this.startedAt !== null ? Math.max(0, now - this.startedAt) : 0;
+    const totalLimitMs = this.settings.timeLimitSec * 1000;
+    const remainingMs = Math.max(0, totalLimitMs - elapsedMs);
 
     const sanitizedPlayers: SanitizedPlayerPosition[] = this.getAllPlayers().map(
       (player) => ({
@@ -572,6 +643,7 @@ export class Room {
       roomCode: this.code,
       serverTimestamp: now,
       elapsedMs,
+      remainingMs,
       players: sanitizedPlayers
     };
   }
@@ -585,6 +657,7 @@ export class Room {
       players: this.getAllPlayers(),
       maxPlayers: CONFIG.MAX_PLAYERS,
       minPlayers: CONFIG.MIN_PLAYERS,
+      settings: { ...this.settings },
       config: this.config,
       seed: this.seed,
       targetHeight: this.targetHeight,
@@ -638,15 +711,35 @@ export class Room {
     );
   }
 
-  private getNextAvailableColor(): PlayerColor {
+  private isColorClaimedByAnother(
+    color: string,
+    excludePlayerId?: string
+  ): boolean {
+    for (const player of this.players.values()) {
+      if (player.id !== excludePlayerId && player.color === color) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private pickAvailableColor(preferredColor?: string): string {
+    if (
+      preferredColor &&
+      isValidClimberColor(preferredColor) &&
+      !this.isColorClaimedByAnother(preferredColor)
+    ) {
+      return preferredColor;
+    }
+
     const usedColors = new Set(
       Array.from(this.players.values()).map((p) => p.color)
     );
-    for (const color of GAME_CONSTANTS.PLAYER_COLORS) {
+    for (const color of CLIMBER_COLORS) {
       if (!usedColors.has(color)) {
         return color;
       }
     }
-    return GAME_CONSTANTS.PLAYER_COLORS[0];
+    return CLIMBER_COLORS[0];
   }
 }

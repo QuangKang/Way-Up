@@ -7,6 +7,8 @@ import {
   Text,
   View
 } from 'react-native';
+import { useLanguage } from '../i18n/LanguageContext';
+import { SoundService } from '../services/soundService';
 import {
   BlizzardGustMiniature,
   FallingBoulderMiniature,
@@ -23,6 +25,8 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
   visible,
   onClose
 }) => {
+  const { t } = useLanguage();
+
   return (
     <Modal
       visible={visible}
@@ -32,18 +36,20 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
     >
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
-          {/* Header */}
           <View style={styles.headerRow}>
             <View>
-              <Text style={styles.kicker}>CLIMBER FIELD GUIDE</Text>
-              <Text style={styles.title}>How to Play</Text>
+              <Text style={styles.kicker}>{t.guideKicker}</Text>
+              <Text style={styles.title}>{t.guideTitle}</Text>
             </View>
             <Pressable
               style={({ pressed }) => [
                 styles.closeBtn,
                 pressed && styles.closeBtnPressed
               ]}
-              onPress={onClose}
+              onPress={() => {
+                SoundService.play('ui_tap');
+                onClose();
+              }}
             >
               <Text style={styles.closeBtnText}>✕</Text>
             </Pressable>
@@ -57,19 +63,13 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
             <View style={styles.tapRuleCard}>
               <View style={styles.tapMiniButtonsRow}>
                 <View style={styles.tapMiniPill}>
-                  <Text style={styles.tapMiniText}>◀ LEFT</Text>
+                  <Text style={styles.tapMiniText}>{t.guideTapLeft}</Text>
                 </View>
                 <View style={styles.tapMiniPill}>
-                  <Text style={styles.tapMiniText}>RIGHT ▶</Text>
+                  <Text style={styles.tapMiniText}>{t.guideTapRight}</Text>
                 </View>
               </View>
-              <Text style={styles.tapRuleBody}>
-                Tap <Text style={styles.boldWhite}>LEFT</Text> or{' '}
-                <Text style={styles.boldWhite}>RIGHT</Text> matching the lane of
-                the next hold above you (+10m per step to the{' '}
-                <Text style={styles.boldGold}>500m Summit</Text>). Tapping the
-                wrong lane slips down 20m!
-              </Text>
+              <Text style={styles.tapRuleBody}>{t.guideTapRule}</Text>
             </View>
 
             {/* 1. Wide Snowy Rock Hold */}
@@ -78,11 +78,8 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
                 <SnowyRockHold width={74} isTarget />
               </View>
               <View style={styles.guideTextCol}>
-                <Text style={styles.itemTitle}>Snowy Rock Hold</Text>
-                <Text style={styles.itemDesc}>
-                  Wide, sturdy granite foothold. Safe to rest on while timing
-                  your next move.
-                </Text>
+                <Text style={styles.itemTitle}>{t.guideRockTitle}</Text>
+                <Text style={styles.itemDesc}>{t.guideRockDesc}</Text>
               </View>
             </View>
 
@@ -93,13 +90,9 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
               </View>
               <View style={styles.guideTextCol}>
                 <Text style={[styles.itemTitle, { color: '#7DD3FC' }]}>
-                  Icy Slippery Hold
+                  {t.guideIceTitle}
                 </Text>
-                <Text style={styles.itemDesc}>
-                  Narrower frozen hold! Hop to the next hold within{' '}
-                  <Text style={styles.boldWhite}>0.75s</Text> before your grip
-                  bar runs out (-20m slide).
-                </Text>
+                <Text style={styles.itemDesc}>{t.guideIceDesc}</Text>
               </View>
             </View>
 
@@ -110,13 +103,9 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
               </View>
               <View style={styles.guideTextCol}>
                 <Text style={[styles.itemTitle, { color: '#FCA5A5' }]}>
-                  Falling Boulder
+                  {t.guideBoulderTitle}
                 </Text>
-                <Text style={styles.itemDesc}>
-                  When <Text style={styles.boldWhite}>⚠ ROCKFALL</Text> flashes
-                  at the top of a lane, a boulder tumbles straight down that
-                  lane (-30m & brief stun). Stay in the opposite lane to dodge!
-                </Text>
+                <Text style={styles.itemDesc}>{t.guideBoulderDesc}</Text>
               </View>
             </View>
 
@@ -127,12 +116,9 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
               </View>
               <View style={styles.guideTextCol}>
                 <Text style={[styles.itemTitle, { color: '#BAE6FD' }]}>
-                  Blizzard Gust
+                  {t.guideBlizzardTitle}
                 </Text>
-                <Text style={styles.itemDesc}>
-                  Near the Alpine Summit (350–500m), snowstorms sweep across the
-                  cliff to obscure vision. No knockback—keep your rhythm!
-                </Text>
+                <Text style={styles.itemDesc}>{t.guideBlizzardDesc}</Text>
               </View>
             </View>
           </ScrollView>
@@ -142,9 +128,12 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({
               styles.gotItBtn,
               pressed && styles.gotItBtnPressed
             ]}
-            onPress={onClose}
+            onPress={() => {
+              SoundService.play('ui_tap');
+              onClose();
+            }}
           >
-            <Text style={styles.gotItText}>Got It — Let&apos;s Climb!</Text>
+            <Text style={styles.gotItText}>{t.guideGotIt}</Text>
           </Pressable>
         </View>
       </View>
@@ -242,14 +231,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600'
-  },
-  boldWhite: {
-    color: '#F8FAFC',
-    fontWeight: '900'
-  },
-  boldGold: {
-    color: '#FBBF24',
-    fontWeight: '900'
   },
   guideRow: {
     flexDirection: 'row',

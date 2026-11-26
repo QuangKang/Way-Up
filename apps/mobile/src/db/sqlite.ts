@@ -6,7 +6,7 @@ let dbInstance: SQLite.SQLiteDatabase | null = null;
 
 /**
  * Initializes and retrieves the singleton SQLite database instance.
- * Automatically runs schema migrations for `device_identity` and `local_records`.
+ * Automatically runs schema migrations for `device_identity`, `local_records`, and `user_preferences`.
  */
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (dbInstance) {
@@ -37,6 +37,14 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       duration_ms INTEGER NOT NULL,
       recorded_at INTEGER NOT NULL,
       sync_status TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      language TEXT NOT NULL DEFAULT 'en',
+      sound_enabled INTEGER NOT NULL DEFAULT 1,
+      haptics_enabled INTEGER NOT NULL DEFAULT 1,
+      preferred_color TEXT NOT NULL DEFAULT '#EF4444'
     );
 
     CREATE INDEX IF NOT EXISTS idx_records_score ON local_records(score DESC);

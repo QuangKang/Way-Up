@@ -1,25 +1,43 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Player, RoomState } from '@climb/shared';
-import { HapticsService } from '../haptics/hapticsService';
+import {
+  CLIMBER_COLORS,
+  DEFAULT_MATCH_SETTINGS,
+  MatchSettings,
+  Player,
+  RoomState,
+  TIME_LIMIT_PRESETS
+} from '@climb/shared';
+import { ClimberAvatar } from '../components/MountainArtwork';
+import { useLanguage } from '../i18n/LanguageContext';
+import { SoundService } from '../services/soundService';
 
 export interface WaitingRoomScreenProps {
   roomState: RoomState;
   playerId: string;
   countdownSeconds: number | null;
+  onSelectColor: (color: string) => void;
+  onUpdateSettings: (settings: Partial<MatchSettings>) => void;
   onToggleReady: () => void;
   onStartMatch: () => void;
   onLeaveRoom: () => void;
+}
+
+function formatPresetMinutes(sec: number): string {
+  return `${Math.round(sec / 60)}m`;
 }
 
 export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
   roomState,
   playerId,
   countdownSeconds,
+  onSelectColor,
+  onUpdateSettings,
   onToggleReady,
   onStartMatch,
   onLeaveRoom
 }) => {
+  const { t } = useLanguage();
   const [showShortHandedConfirm, setShowShortHandedConfirm] = useState(false);
 
   const selfPlayer = roomState.players.find((p) => p.id === playerId);
@@ -32,12 +50,21 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
   const totalCount = roomState.players.length;
   const allReady = totalCount >= 2 && readyCount === totalCount;
   const isSoloWaiting = totalCount < 2;
-  const canHostPressStart = isHost && totalCount >= 2 && allReady && !isCountingDown;
+  const canHostPressStart =
+    isHost && totalCount >= 2 && allReady && !isCountingDown;
+
+  const settings = roomState.settings ?? DEFAULT_MATCH_SETTINGS;
+  const canEditSettings = isHost && !isCountingDown;
+
+  const takenByOthers = new Set(
+    roomState.players
+      .filter((p) => p.id !== playerId)
+      .map((p) => p.color)
+  );
 
   const emptySlotsCount = Math.max(0, roomState.maxPlayers - totalCount);
   const emptySlots = Array.from({ length: emptySlotsCount }, (_, idx) => idx);
 
-  // Close confirmation popup automatically if roster drops below 2, unreadies, or starts countdown
   useEffect(() => {
     if (!canHostPressStart || totalCount >= 4) {
       setShowShortHandedConfirm(false);
@@ -46,45 +73,167 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
 
   const getStartButtonLabel = (): string => {
     if (isSoloWaiting) {
-      return 'Need 2+ Climbers to Start';
+      return t.needTwoPlayersBtn;
     }
     if (!allReady) {
-      return `Waiting for Ready (${readyCount}/${totalCount})`;
+      return `${t.waitingForReadyPrefix} (${readyCount}/${totalCount})`;
     }
-    return `▲ Start Match (${totalCount}/${roomState.maxPlayers} Climbers)`;
+    return `${t.startMatchPrefix} (${totalCount}/${roomState.maxPlayers})`;
   };
 
   const handlePressStart = () => {
     if (!canHostPressStart) return;
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
 
     if (totalCount === 2 || totalCount === 3) {
       setShowShortHandedConfirm(true);
       return;
     }
 
-    // 4/4 climbers ready -> start immediately with no modal
     onStartMatch();
   };
 
   return (
     <View style={styles.wrapper}>
-      {/* Room Code Basecamp Banner */}
+      {/* Room Code Banner */}
       <View style={styles.codeBanner}>
         <View style={styles.peakSilhouetteLeft} />
         <View style={styles.peakSilhouetteRight} />
-        <Text style={styles.codeLabel}>ONLINE ROOM CODE</Text>
+        <Text style={styles.codeLabel}>{t.onlineRoomCode}</Text>
         <Text style={styles.codeValue}>{roomState.code}</Text>
         <View style={styles.metaPillRow}>
           <View style={styles.metaPill}>
             <Text style={styles.metaPillText}>
-              🧗 {totalCount}/{roomState.maxPlayers} CLIMBERS
+              🧗 {totalCount}/{roomState.maxPlayers} {t.climbersCountSuffix}
             </Text>
           </View>
           <View style={styles.metaPill}>
             <Text style={styles.metaPillText}>
-              🏔 {roomState.targetHeight}M SUMMIT
+              🏔 {roomState.targetHeight}M {t.summitTargetSuffix}
             </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Unique Climber Color Picker Row */}
+      <View style={styles.panelCard}>
+        <Text style={styles.panelTitle}>{t.chooseColorLabel}</Text>
+        <View style={styles.colorSwatchRow}>
+          {CLIMBER_COLORS.map((color) => {
+            const isMine = selfPlayer?.color === color;
+            const isTaken = takenByOthers.has(color);
+            return (
+              <Pressable
+                key={color}
+                disabled={isTaken || isCountingDown}
+                style={[
+                  styles.colorSwatch,
+                  { backgroundColor: color },
+                  isMine && styles.colorSwatchMine,
+                  isTaken && styles.colorSwatchTaken
+                ]}
+                onPress={() => {
+                  SoundService.play('ui_tap');
+                  onSelectColor(color);
+                }}
+              >
+                {isMine && <Text style={styles.swatchGlyph}>✓</Text>}
+                {isTaken && <Text style={styles.swatchLockGlyph}>🔒</Text>}
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.colorHintText}>{t.colorTakenHint}</Text>
+      </View>
+
+      {/* Pre-Game Match Settings Panel (Host Editable, Guest Read-Only) */}
+      <View style={styles.panelCard}>
+        <View style={styles.panelHeaderRow}>
+          <Text style={styles.panelTitle}>{t.matchRulesTitle}</Text>
+          {!isHost && (
+            <Text style={styles.hostReadOnlyBadge}>{t.hostRulesHint}</Text>
+          )}
+        </View>
+
+        <View style={styles.rulesGrid}>
+          {/* Falling Boulders */}
+          <Pressable
+            disabled={!canEditSettings}
+            style={[
+              styles.ruleChip,
+              settings.enableBoulders ? styles.ruleChipOn : styles.ruleChipOff
+            ]}
+            onPress={() => {
+              SoundService.play('ui_tap');
+              onUpdateSettings({ enableBoulders: !settings.enableBoulders });
+            }}
+          >
+            <Text style={styles.ruleChipLabel}>🪨 {t.fallingBouldersLabel}</Text>
+            <Text
+              style={[
+                styles.ruleChipState,
+                settings.enableBoulders
+                  ? styles.ruleStateTextOn
+                  : styles.ruleStateTextOff
+              ]}
+            >
+              {settings.enableBoulders ? t.on : t.off}
+            </Text>
+          </Pressable>
+
+          {/* Icy Ledges */}
+          <Pressable
+            disabled={!canEditSettings}
+            style={[
+              styles.ruleChip,
+              settings.enableIce ? styles.ruleChipOn : styles.ruleChipOff
+            ]}
+            onPress={() => {
+              SoundService.play('ui_tap');
+              onUpdateSettings({ enableIce: !settings.enableIce });
+            }}
+          >
+            <Text style={styles.ruleChipLabel}>🧊 {t.icyLedgesLabel}</Text>
+            <Text
+              style={[
+                styles.ruleChipState,
+                settings.enableIce
+                  ? styles.ruleStateTextOn
+                  : styles.ruleStateTextOff
+              ]}
+            >
+              {settings.enableIce ? t.on : t.off}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Time Limit Row */}
+        <View style={styles.timeLimitRow}>
+          <Text style={styles.timeLimitCaption}>⏱ {t.timeLimitLabel}</Text>
+          <View style={styles.timePillsGroup}>
+            {TIME_LIMIT_PRESETS.map((sec) => {
+              const active = settings.timeLimitSec === sec;
+              return (
+                <Pressable
+                  key={sec}
+                  disabled={!canEditSettings}
+                  style={[styles.timePill, active && styles.timePillActive]}
+                  onPress={() => {
+                    SoundService.play('ui_tap');
+                    onUpdateSettings({ timeLimitSec: sec });
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.timePillText,
+                      active && styles.timePillTextActive
+                    ]}
+                  >
+                    {formatPresetMinutes(sec)}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       </View>
@@ -92,9 +241,9 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       {/* Player Roster Card */}
       <View style={styles.rosterCard}>
         <View style={styles.rosterHeader}>
-          <Text style={styles.rosterTitle}>CLIMBING CREW</Text>
+          <Text style={styles.rosterTitle}>{t.climbingCrewTitle}</Text>
           <Text style={styles.rosterProgress}>
-            {readyCount}/{totalCount} Ready
+            {readyCount}/{totalCount} {t.readyCountSuffix}
           </Text>
         </View>
 
@@ -106,26 +255,21 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                 key={player.id}
                 style={[styles.playerSlot, isSelf && styles.playerSlotSelf]}
               >
-                <View
-                  style={[
-                    styles.helmetBadge,
-                    { backgroundColor: player.color }
-                  ]}
-                >
-                  <View style={styles.helmetGoggles} />
+                <View style={styles.slotAvatarBox}>
+                  <ClimberAvatar jacketColor={player.color} scale={0.72} />
                 </View>
 
                 <View style={styles.playerDetails}>
                   <Text style={styles.playerNickname} numberOfLines={1}>
-                    {player.nickname} {isSelf ? '(You)' : ''}
+                    {player.nickname} {isSelf ? t.youSuffix : ''}
                   </Text>
-                  <Text style={styles.slotCaption}>
-                    Climber #{index + 1} • Online Race
-                  </Text>
+                  <Text style={styles.slotCaption}>#{index + 1}</Text>
                 </View>
 
                 <View style={styles.badgeGroup}>
-                  {player.isHost && <Text style={styles.hostBadge}>HOST</Text>}
+                  {player.isHost && (
+                    <Text style={styles.hostBadge}>{t.hostBadge}</Text>
+                  )}
                   <Text
                     style={[
                       styles.readyBadge,
@@ -134,7 +278,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                         : styles.readyBadgeNo
                     ]}
                   >
-                    {player.isReady ? 'READY' : 'PREP'}
+                    {player.isReady ? t.readyBadge : t.prepBadge}
                   </Text>
                 </View>
               </View>
@@ -148,8 +292,8 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             >
               <View style={styles.emptyDot} />
               <Text style={styles.emptySlotText}>
-                Open Slot #{totalCount + slotOffset + 1} — Share code{' '}
-                {roomState.code}
+                {t.openSlotPrefix} #{totalCount + slotOffset + 1} —{' '}
+                {t.shareCodeLabel} {roomState.code}
               </Text>
             </View>
           ))}
@@ -168,9 +312,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             onPress={onToggleReady}
           >
             <Text style={styles.buttonText}>
-              {selfPlayer?.isReady
-                ? '✓ Ready (Tap to Unready)'
-                : 'Ready Up!'}
+              {selfPlayer?.isReady ? t.readyActiveBtn : t.readyUpBtn}
             </Text>
           </Pressable>
 
@@ -190,17 +332,14 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
               </Pressable>
               {isSoloWaiting && (
                 <Text style={styles.soloHelperText}>
-                  Share room code {roomState.code} — need 2+ climbers to start
-                  online (or use Offline mode for solo play).
+                  {t.needTwoPlayersHint}
                 </Text>
               )}
             </View>
           ) : (
             <View style={styles.guestNoticeBox}>
               <Text style={styles.guestNoticeText}>
-                {allReady
-                  ? 'All climbers ready! Waiting for Host to start...'
-                  : 'Tap "Ready Up!" so the Host can start the ascent.'}
+                {allReady ? t.guestAllReadyHint : t.guestPleaseReadyHint}
               </Text>
             </View>
           )}
@@ -214,7 +353,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             disabled={isCountingDown}
             onPress={onLeaveRoom}
           >
-            <Text style={styles.leaveBtnText}>Leave Room</Text>
+            <Text style={styles.leaveBtnText}>{t.leaveRoomBtn}</Text>
           </Pressable>
         </View>
       </View>
@@ -228,24 +367,23 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       >
         <View style={styles.confirmBackdrop}>
           <View style={styles.confirmModal}>
-            <Text style={styles.confirmKicker}>ROSTER CHECK</Text>
+            <Text style={styles.confirmKicker}>{t.shortHandedKicker}</Text>
             <Text style={styles.confirmTitle}>
-              Not enough players ({totalCount}/4). Still want to start?
+              {t.shortHandedTitle(totalCount, roomState.maxPlayers)}
             </Text>
             <Text style={styles.confirmSub}>
-              You can wait for more climbers to join with code {roomState.code}{' '}
-              or launch the race right now.
+              {t.shortHandedSub(roomState.code)}
             </Text>
 
             <View style={styles.confirmBtnRow}>
               <Pressable
                 style={styles.confirmCancelBtn}
                 onPress={() => {
-                  void HapticsService.selection();
+                  SoundService.play('ui_tap');
                   setShowShortHandedConfirm(false);
                 }}
               >
-                <Text style={styles.confirmCancelText}>Cancel</Text>
+                <Text style={styles.confirmCancelText}>{t.cancel}</Text>
               </Pressable>
 
               <Pressable
@@ -254,12 +392,14 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                   pressed && styles.buttonPressed
                 ]}
                 onPress={() => {
-                  void HapticsService.selection();
+                  SoundService.play('ui_tap');
                   setShowShortHandedConfirm(false);
                   onStartMatch();
                 }}
               >
-                <Text style={styles.confirmStartText}>Start Anyway</Text>
+                <Text style={styles.confirmStartText}>
+                  {t.startAnywayBtn}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -270,14 +410,14 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       {isCountingDown && (
         <View style={styles.countdownOverlay}>
           <View style={styles.countdownModal}>
-            <Text style={styles.countdownTitle}>GET READY TO CLIMB!</Text>
+            <Text style={styles.countdownTitle}>{t.countdownGetReady}</Text>
             <Text style={styles.countdownNumber}>
               {activeCountdown !== null && activeCountdown > 0
                 ? activeCountdown
-                : 'GO!'}
+                : t.countdownGo}
             </Text>
             <Text style={styles.countdownSub}>
-              Summit Target: {roomState.targetHeight}m
+              {roomState.targetHeight}m • {formatPresetMinutes(settings.timeLimitSec)}
             </Text>
           </View>
         </View>
@@ -288,15 +428,15 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
 
 const styles = StyleSheet.create({
   wrapper: {
-    position: 'relative'
+    position: 'relative',
+    gap: 12
   },
   codeBanner: {
     backgroundColor: '#13223A',
     borderRadius: 18,
-    paddingVertical: 22,
+    paddingVertical: 18,
     paddingHorizontal: 20,
     alignItems: 'center',
-    marginBottom: 14,
     borderWidth: 1.5,
     borderColor: '#38BDF8',
     overflow: 'hidden'
@@ -325,14 +465,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
     color: '#7DD3FC',
-    letterSpacing: 1.6
+    letterSpacing: 1.5
   },
   codeValue: {
-    fontSize: 44,
+    fontSize: 40,
     fontWeight: '900',
     color: '#F8FAFC',
     letterSpacing: 8,
-    marginVertical: 6
+    marginVertical: 4
   },
   metaPillRow: {
     flexDirection: 'row',
@@ -342,7 +482,7 @@ const styles = StyleSheet.create({
   metaPill: {
     backgroundColor: '#0A1322',
     paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#294266'
@@ -352,10 +492,150 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800'
   },
+  panelCard: {
+    backgroundColor: '#132036',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#263B59'
+  },
+  panelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  panelTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#CBD5E1',
+    letterSpacing: 0.6,
+    marginBottom: 8
+  },
+  hostReadOnlyBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#7DD3FC',
+    backgroundColor: '#0B1424',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 8
+  },
+  colorSwatchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  colorSwatch: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)'
+  },
+  colorSwatchMine: {
+    borderColor: '#FFFFFF',
+    borderWidth: 3,
+    transform: [{ scale: 1.08 }]
+  },
+  colorSwatchTaken: {
+    opacity: 0.3
+  },
+  swatchGlyph: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900'
+  },
+  swatchLockGlyph: {
+    fontSize: 11
+  },
+  colorHintText: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 7
+  },
+  rulesGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10
+  },
+  ruleChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1
+  },
+  ruleChipOn: {
+    backgroundColor: '#0B1E36',
+    borderColor: '#38BDF8'
+  },
+  ruleChipOff: {
+    backgroundColor: '#0B1424',
+    borderColor: '#263B59'
+  },
+  ruleChipLabel: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '800',
+    flexShrink: 1,
+    marginRight: 4
+  },
+  ruleChipState: {
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  ruleStateTextOn: {
+    color: '#34D399'
+  },
+  ruleStateTextOff: {
+    color: '#94A3B8'
+  },
+  timeLimitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  timeLimitCaption: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  timePillsGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#09111E',
+    borderRadius: 9,
+    padding: 3,
+    gap: 4
+  },
+  timePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 7
+  },
+  timePillActive: {
+    backgroundColor: '#0284C7'
+  },
+  timePillText: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  timePillTextActive: {
+    color: '#FFFFFF'
+  },
   rosterCard: {
     backgroundColor: '#132036',
     borderRadius: 18,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#263B59'
   },
@@ -363,7 +643,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12
+    marginBottom: 10
   },
   rosterTitle: {
     fontSize: 12,
@@ -377,14 +657,15 @@ const styles = StyleSheet.create({
     color: '#34D399'
   },
   slotList: {
-    gap: 10,
-    marginBottom: 18
+    gap: 8,
+    marginBottom: 16
   },
   playerSlot: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0B1424',
-    padding: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1C2E4A'
@@ -393,34 +674,26 @@ const styles = StyleSheet.create({
     borderColor: '#38BDF8',
     backgroundColor: '#0F1F38'
   },
+  slotAvatarBox: {
+    width: 34,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10
+  },
   emptySlot: {
     backgroundColor: '#09111E',
     borderStyle: 'dashed',
     borderColor: '#263B59',
-    paddingVertical: 14
-  },
-  helmetBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    marginRight: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.3)'
-  },
-  helmetGoggles: {
-    width: 14,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#0F172A'
+    paddingVertical: 13
   },
   emptyDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#263B59',
-    marginRight: 12
+    marginRight: 10,
+    marginLeft: 6
   },
   emptySlotText: {
     color: '#64748B',
@@ -432,15 +705,15 @@ const styles = StyleSheet.create({
     marginRight: 8
   },
   playerNickname: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     color: '#F8FAFC'
   },
   slotCaption: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#64748B',
-    marginTop: 2,
-    fontWeight: '600'
+    marginTop: 1,
+    fontWeight: '700'
   },
   badgeGroup: {
     flexDirection: 'row',
@@ -450,9 +723,9 @@ const styles = StyleSheet.create({
   hostBadge: {
     backgroundColor: '#FACC15',
     color: '#0F172A',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '900',
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 5
   },
@@ -472,10 +745,10 @@ const styles = StyleSheet.create({
     color: '#94A3B8'
   },
   controlsColumn: {
-    gap: 10
+    gap: 9
   },
   button: {
-    paddingVertical: 14,
+    paddingVertical: 13,
     paddingHorizontal: 20,
     borderRadius: 13,
     alignItems: 'center',
@@ -510,7 +783,7 @@ const styles = StyleSheet.create({
     lineHeight: 16
   },
   leaveBtn: {
-    paddingVertical: 13,
+    paddingVertical: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EF4444',

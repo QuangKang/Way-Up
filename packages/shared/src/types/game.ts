@@ -2,6 +2,66 @@
  * Core game constants and model definitions for Way Up!
  */
 
+export const CLIMBER_COLORS = [
+  '#EF4444', // Summit Red
+  '#38BDF8', // Glacier Blue
+  '#10B981', // Alpine Emerald
+  '#F59E0B', // Sunburst Gold
+  '#A855F7', // Violet Peak
+  '#F97316', // Ember Orange
+  '#EC4899'  // Rose Quartz
+] as const;
+
+export type ClimberColor = (typeof CLIMBER_COLORS)[number];
+
+export type PlayerColor = string;
+
+export function isValidClimberColor(color: string): color is ClimberColor {
+  return (CLIMBER_COLORS as readonly string[]).includes(color);
+}
+
+export const TIME_LIMIT_PRESETS = [60, 120, 180, 300] as const;
+
+export type TimeLimitPreset = (typeof TIME_LIMIT_PRESETS)[number];
+
+export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
+
+export interface MatchSettings {
+  enableBoulders: boolean;
+  enableIce: boolean;
+  timeLimitSec: number; // Clamped 60..300 (1m .. 5m max)
+}
+
+export const DEFAULT_MATCH_SETTINGS: MatchSettings = {
+  enableBoulders: true,
+  enableIce: true,
+  timeLimitSec: 180
+};
+
+export function sanitizeMatchSettings(
+  partial?: Partial<MatchSettings>,
+  base: MatchSettings = DEFAULT_MATCH_SETTINGS
+): MatchSettings {
+  const enableBoulders =
+    typeof partial?.enableBoulders === 'boolean'
+      ? partial.enableBoulders
+      : base.enableBoulders;
+  const enableIce =
+    typeof partial?.enableIce === 'boolean' ? partial.enableIce : base.enableIce;
+  const rawTime =
+    typeof partial?.timeLimitSec === 'number' &&
+    Number.isFinite(partial.timeLimitSec)
+      ? Math.round(partial.timeLimitSec)
+      : base.timeLimitSec;
+  const timeLimitSec = Math.max(60, Math.min(300, rawTime));
+
+  return {
+    enableBoulders,
+    enableIce,
+    timeLimitSec
+  };
+}
+
 export const GAME_CONSTANTS = {
   MIN_PLAYERS: 2, // Online matches require at least 2 climbers (Offline mode handles solo + bots)
   MULTIPLAYER_MIN_PLAYERS: 2,
@@ -19,20 +79,16 @@ export const GAME_CONSTANTS = {
   FOOTHILLS_MAX_HEIGHT: 150,
   CLIFFS_MAX_HEIGHT: 350,
   SLIP_LIMIT_MS: 750,
-  MATCH_TIME_LIMIT_MS: 120000,
+  DEFAULT_TIME_LIMIT_SEC: 180,
+  MIN_TIME_LIMIT_SEC: 60,
+  MAX_TIME_LIMIT_SEC: 300,
+  MATCH_TIME_LIMIT_MS: 180000,
   MAX_STEP_HEIGHT_DELTA: 60,
   MAX_BURST_HEIGHT_DELTA: 80,
   MAX_HEIGHT_GAIN_PER_SEC: 110,
   WORLD_WIDTH: 400,
-  PLAYER_COLORS: [
-    '#EF4444', // Crimson Red
-    '#3B82F6', // Royal Blue
-    '#10B981', // Emerald Green
-    '#F59E0B'  // Amber Yellow
-  ] as const
+  PLAYER_COLORS: CLIMBER_COLORS
 } as const;
-
-export type PlayerColor = typeof GAME_CONSTANTS.PLAYER_COLORS[number];
 
 export type RoomPhase = 'WAITING' | 'COUNTDOWN' | 'PLAYING' | 'FINISHED';
 
@@ -64,6 +120,7 @@ export interface MatchConfig {
   seed: number;
   targetHeight: number;
   countdownSec: number;
+  settings: MatchSettings;
 }
 
 export interface Player {
@@ -72,7 +129,7 @@ export interface Player {
   name: string; // Kept synchronized with nickname for compatibility
   isHost: boolean;
   isReady: boolean;
-  color: PlayerColor;
+  color: string;
   height: number;
   x: number;
   y: number; // Kept synchronized with height
@@ -109,6 +166,7 @@ export interface RoomState {
   players: Player[];
   maxPlayers: number;
   minPlayers: number;
+  settings: MatchSettings;
   config: MatchConfig;
   seed: number;
   targetHeight: number;

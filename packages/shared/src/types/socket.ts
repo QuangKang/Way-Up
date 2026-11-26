@@ -1,6 +1,6 @@
 import {
   MatchConfig,
-  PlayerColor,
+  MatchSettings,
   PlayerMoveAction,
   PlayerStatus,
   RoomState
@@ -15,6 +15,7 @@ export interface JoinRoomPayload {
   playerName: string;
   nickname?: string;
   playerId: string; // Device/Guest UUID
+  preferredColor?: string;
 }
 
 export interface RoomLeavePayload {
@@ -34,6 +35,18 @@ export interface SetReadyPayload {
   roomCode: string;
   playerId: string;
   isReady: boolean;
+}
+
+export interface UpdateRoomSettingsPayload {
+  roomCode: string;
+  playerId: string; // Must be room host
+  settings: Partial<MatchSettings>;
+}
+
+export interface SelectPlayerColorPayload {
+  roomCode: string;
+  playerId: string;
+  color: string;
 }
 
 export interface MatchStartPayload {
@@ -74,7 +87,7 @@ export interface PlayerMovePayload {
 export interface SanitizedPlayerPosition {
   id: string;
   nickname: string;
-  color: PlayerColor;
+  color: string;
   x: number;
   height: number;
   status: PlayerStatus;
@@ -85,6 +98,7 @@ export interface MatchStatePayload {
   roomCode: string;
   serverTimestamp: number;
   elapsedMs: number;
+  remainingMs?: number;
   players: SanitizedPlayerPosition[];
 }
 
@@ -92,7 +106,7 @@ export interface MatchRankingEntry {
   rank: number;
   playerId: string;
   nickname: string;
-  color: PlayerColor;
+  color: string;
   height: number;
   score: number;
   status: PlayerStatus;
@@ -134,13 +148,16 @@ export interface PingPayload {
 export interface RoomJoinedPayload {
   room: RoomState;
   selfPlayerId: string;
-  assignedColor: PlayerColor;
+  assignedColor: string;
 }
 
 export type RoomUpdateReason =
   | 'PLAYER_JOINED'
   | 'PLAYER_LEFT'
   | 'READY_CHANGED'
+  | 'SETTINGS_UPDATED'
+  | 'COLOR_CHANGED'
+  | 'PLAYER_FINISHED'
   | 'HOST_TRANSFERRED'
   | 'COUNTDOWN_STARTED'
   | 'COUNTDOWN_TICK'
@@ -199,6 +216,8 @@ export interface ErrorPayload {
     | 'NOT_ENOUGH_PLAYERS'
     | 'NOT_ALL_PLAYERS_READY'
     | 'UNAUTHORIZED_NOT_HOST'
+    | 'COLOR_ALREADY_TAKEN'
+    | 'INVALID_COLOR'
     | 'INVALID_ROOM_CODE'
     | 'INVALID_ROOM_PHASE'
     | 'INVALID_MOVE'
@@ -234,9 +253,17 @@ export interface ClientToServerEvents {
   PLAYER_INPUT: (payload: PlayerInputPayload) => void;
   PING: (payload: PingPayload) => void;
 
-  // Waiting Room & Authoritative Match Lifecycle Events
+  // Waiting Room, Customization & Authoritative Match Lifecycle Events
   'player:ready': (
     payload: PlayerReadyPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
+  'room:update_settings': (
+    payload: UpdateRoomSettingsPayload,
+    callback?: (response: SocketResponse<RoomState>) => void
+  ) => void;
+  'player:select_color': (
+    payload: SelectPlayerColorPayload,
     callback?: (response: SocketResponse<RoomState>) => void
   ) => void;
   'room:leave': (payload: RoomLeavePayload) => void;

@@ -10,224 +10,226 @@ import {
 } from 'react-native';
 import { HowToPlayModal } from '../components/HowToPlayModal';
 import { OfflineRecordsView } from '../components/OfflineRecordsView';
-import { HapticsService } from '../haptics/hapticsService';
+import {
+  OfflineLaunchConfig,
+  OfflineSetupModal
+} from '../components/OfflineSetupModal';
+import { SettingsModal } from '../components/SettingsModal';
+import { AppLanguage } from '../db/preferencesService';
+import { useLanguage } from '../i18n/LanguageContext';
+import { SoundService } from '../services/soundService';
 
 export interface LobbyScreenProps {
   playerId: string;
+  preferredColor: string;
+  soundEnabled: boolean;
+  hapticsEnabled: boolean;
   isConnecting: boolean;
   isConnected: boolean;
   serverError: string | null;
   onClearError: () => void;
+  onSelectPreferredColor: (color: string) => void;
+  onToggleSound: (next: boolean) => void;
+  onToggleHaptics: (next: boolean) => void;
+  onSelectLanguage: (lang: AppLanguage) => void;
+  onLongPressTitle: () => void;
   onCreateOnlineRoom: () => void;
   onJoinOnlineRoom: (roomCode: string) => void;
-  onStartOfflineMatch: () => void;
+  onStartOfflineMatch: (config: OfflineLaunchConfig) => void;
 }
 
 export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   playerId,
+  preferredColor,
+  soundEnabled,
+  hapticsEnabled,
   isConnecting,
   isConnected,
   serverError,
   onClearError,
+  onSelectPreferredColor,
+  onToggleSound,
+  onToggleHaptics,
+  onSelectLanguage,
+  onLongPressTitle,
   onCreateOnlineRoom,
   onJoinOnlineRoom,
   onStartOfflineMatch
 }) => {
+  const { t } = useLanguage();
   const [onlineExpanded, setOnlineExpanded] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [localJoinError, setLocalJoinError] = useState<string | null>(null);
+
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [showRecordsModal, setShowRecordsModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showOfflineSetup, setShowOfflineSetup] = useState(false);
 
   const cleanedCode = joinCode.trim().toUpperCase();
   const canUseOnline = isConnected && !isConnecting;
 
   const handleSubmitJoin = () => {
     if (cleanedCode.length !== 4) {
-      setLocalJoinError('Enter a 4-character room code.');
+      setLocalJoinError(t.joinCodeLengthError);
       return;
     }
     if (!canUseOnline) {
-      setLocalJoinError('Server is offline. Check your Wi-Fi connection.');
+      setLocalJoinError(t.joinServerOfflineError);
       return;
     }
     setLocalJoinError(null);
     onClearError();
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
     onJoinOnlineRoom(cleanedCode);
   };
 
   return (
-    <View style={styles.wrapper}>
-      {/* Scenic Expedition Stage + Side Circular Action Buttons (📖 & 🏆) */}
-      <View style={styles.stageCard}>
-        {/* Background Mountain Silhouettes */}
-        <View style={styles.bgPeakLeft} />
-        <View style={styles.bgPeakCenter}>
-          <View style={styles.bgPeakCenterSnow} />
-        </View>
-        <View style={styles.bgPeakRight} />
-
-        <View style={styles.stageContentRow}>
-          <View style={styles.stageCopyCol}>
-            <View style={styles.goalBadge}>
-              <Text style={styles.goalBadgeText}>500M ALPINE ASCENT</Text>
-            </View>
-            <Text style={styles.stageHeadline}>Conquer the Peak</Text>
-            <Text style={styles.stageSub}>
-              Race up snow-capped crags, leap off icy holds before you slip, and
-              dodge tumbling boulders!
-            </Text>
-          </View>
-
-          {/* Side Circular Icon Buttons: Book (How to Play) & Trophy (Records) */}
-          <View style={styles.sideActionCol}>
-            <Pressable
-              accessibilityLabel="How to Play"
-              style={({ pressed }) => [
-                styles.circleIconBtn,
-                pressed && styles.circleIconBtnPressed
-              ]}
-              onPress={() => {
-                void HapticsService.selection();
-                setShowHowToPlay(true);
-              }}
-            >
-              <Text style={styles.circleIconGlyph}>📖</Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityLabel="Personal Best Records"
-              style={({ pressed }) => [
-                styles.circleIconBtn,
-                styles.circleTrophyBtn,
-                pressed && styles.circleIconBtnPressed
-              ]}
-              onPress={() => {
-                void HapticsService.selection();
-                setShowRecordsModal(true);
-              }}
-            >
-              <Text style={styles.circleIconGlyph}>🏆</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-
-      {/* Primary Mode Selection: ONLINE & OFFLINE */}
-      <View style={styles.modesColumn}>
-        {/* ONLINE PRIMARY BUTTON */}
+    <View style={styles.homeStage}>
+      {/* 3 Smaller Circular Right-Edge Action Buttons (📖, 🏆, ⚙️) */}
+      <View style={styles.rightEdgeDock}>
         <Pressable
+          accessibilityLabel={t.guideTitle}
           style={({ pressed }) => [
-            styles.modePrimaryBtn,
-            styles.onlineBtn,
-            onlineExpanded && styles.onlineBtnExpanded,
-            pressed && styles.modeBtnPressed
+            styles.dockIconBtn,
+            styles.dockBookBtn,
+            pressed && styles.dockIconBtnPressed
           ]}
           onPress={() => {
-            void HapticsService.selection();
-            setOnlineExpanded((prev) => !prev);
+            SoundService.play('ui_tap');
+            setShowHowToPlay(true);
           }}
         >
-          <View style={styles.modeBtnMainRow}>
-            <View>
-              <Text style={styles.modeBtnTitle}>ONLINE</Text>
-              <Text style={styles.modeBtnSub}>
-                2–4 Climbers • Real-Time Ghost Race
-              </Text>
-            </View>
-            <View style={styles.modeChevronPill}>
-              <Text style={styles.modeChevronText}>
-                {onlineExpanded ? '▲' : '▼'}
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.dockIconGlyph}>📖</Text>
         </Pressable>
 
-        {/* Expanded Online Sub-Options: Create Room & Join Room */}
-        {onlineExpanded && (
-          <View style={styles.onlineDrawer}>
-            {!canUseOnline && (
-              <View style={styles.offlineNoticeRow}>
-                <View style={styles.offlineDot} />
-                <Text style={styles.offlineNoticeText}>
-                  {isConnecting
-                    ? 'Connecting to multiplayer server...'
-                    : 'Server offline — Online rooms unavailable (Offline mode ready below)'}
+        <Pressable
+          accessibilityLabel={t.recordsTitle}
+          style={({ pressed }) => [
+            styles.dockIconBtn,
+            styles.dockTrophyBtn,
+            pressed && styles.dockIconBtnPressed
+          ]}
+          onPress={() => {
+            SoundService.play('ui_tap');
+            setShowRecordsModal(true);
+          }}
+        >
+          <Text style={styles.dockIconGlyph}>🏆</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityLabel={t.settingsTitle}
+          style={({ pressed }) => [
+            styles.dockIconBtn,
+            styles.dockSettingsBtn,
+            pressed && styles.dockIconBtnPressed
+          ]}
+          onPress={() => {
+            SoundService.play('ui_tap');
+            setShowSettingsModal(true);
+          }}
+        >
+          <Text style={styles.dockIconGlyph}>⚙️</Text>
+        </Pressable>
+      </View>
+
+      {/* Center Column: Floating WAY UP! Title (no card/box) + Narrower Centered Play Buttons */}
+      <View style={styles.centerColumn}>
+        {/* Floating Centered Game Title (1.2s long-press opens hidden Dev Info modal) */}
+        <Pressable
+          delayLongPress={1200}
+          onLongPress={onLongPressTitle}
+          style={styles.floatingTitleZone}
+        >
+          <Text style={styles.floatingKicker}>▲ {t.appSubtitle} ▲</Text>
+          <Text style={styles.floatingTitle}>WAY UP!</Text>
+        </Pressable>
+
+        {/* Narrower Centered Primary Play Buttons (~64% width, max 248px) */}
+        <View style={styles.narrowButtonStack}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.primaryCompactBtn,
+              styles.onlinePrimaryBtn,
+              onlineExpanded && styles.onlinePrimaryBtnExpanded,
+              pressed && styles.primaryCompactBtnPressed
+            ]}
+            onPress={() => {
+              SoundService.play('ui_tap');
+              setOnlineExpanded((prev) => !prev);
+            }}
+          >
+            <Text style={styles.primaryCompactText}>{t.onlineBtn}</Text>
+          </Pressable>
+
+          {/* Expanded Online Sub-Buttons (Centered directly under ONLINE) */}
+          {onlineExpanded && (
+            <View style={styles.onlineSubStack}>
+              {!canUseOnline && (
+                <Text style={styles.serverStatusCaption}>
+                  {isConnecting ? t.serverConnectingHint : t.serverOfflineHint}
                 </Text>
+              )}
+
+              <View style={styles.onlineSubRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.onlineSubBtn,
+                    styles.createSubBtn,
+                    !canUseOnline && styles.btnDisabled,
+                    pressed && canUseOnline && styles.primaryCompactBtnPressed
+                  ]}
+                  disabled={!canUseOnline}
+                  onPress={() => {
+                    SoundService.play('ui_tap');
+                    onClearError();
+                    onCreateOnlineRoom();
+                  }}
+                >
+                  <Text style={styles.onlineSubBtnText}>{t.createRoom}</Text>
+                </Pressable>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.onlineSubBtn,
+                    styles.joinSubBtn,
+                    !canUseOnline && styles.btnDisabled,
+                    pressed && canUseOnline && styles.primaryCompactBtnPressed
+                  ]}
+                  disabled={!canUseOnline}
+                  onPress={() => {
+                    SoundService.play('ui_tap');
+                    setJoinCode('');
+                    setLocalJoinError(null);
+                    onClearError();
+                    setShowJoinModal(true);
+                  }}
+                >
+                  <Text style={styles.onlineSubBtnText}>{t.joinRoom}</Text>
+                </Pressable>
               </View>
-            )}
-
-            <View style={styles.onlineSubActionsRow}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.subOptionBtn,
-                  styles.createRoomBtn,
-                  !canUseOnline && styles.subOptionDisabled,
-                  pressed && canUseOnline && styles.subOptionPressed
-                ]}
-                disabled={!canUseOnline}
-                onPress={() => {
-                  void HapticsService.selection();
-                  onClearError();
-                  onCreateOnlineRoom();
-                }}
-              >
-                <Text style={styles.subOptionTitle}>Create Room</Text>
-                <Text style={styles.subOptionHint}>Host 4-Player Lobby</Text>
-              </Pressable>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.subOptionBtn,
-                  styles.joinRoomBtn,
-                  !canUseOnline && styles.subOptionDisabled,
-                  pressed && canUseOnline && styles.subOptionPressed
-                ]}
-                disabled={!canUseOnline}
-                onPress={() => {
-                  void HapticsService.selection();
-                  setJoinCode('');
-                  setLocalJoinError(null);
-                  onClearError();
-                  setShowJoinModal(true);
-                }}
-              >
-                <Text style={styles.subOptionTitle}>Join Room</Text>
-                <Text style={styles.subOptionHint}>Enter 4-Char Code</Text>
-              </Pressable>
             </View>
-          </View>
-        )}
+          )}
 
-        {/* OFFLINE PRIMARY BUTTON */}
-        <Pressable
-          style={({ pressed }) => [
-            styles.modePrimaryBtn,
-            styles.offlineBtn,
-            pressed && styles.modeBtnPressed
-          ]}
-          onPress={() => {
-            void HapticsService.selection();
-            onStartOfflineMatch();
-          }}
-        >
-          <View style={styles.modeBtnMainRow}>
-            <View>
-              <Text style={styles.modeBtnTitle}>OFFLINE</Text>
-              <Text style={styles.offlineBtnSub}>
-                Solo Race vs 3 AI Climbers • Instant Start
-              </Text>
-            </View>
-            <View style={styles.playGoPill}>
-              <Text style={styles.playGoPillText}>PLAY ▶</Text>
-            </View>
-          </View>
-        </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.primaryCompactBtn,
+              styles.offlinePrimaryBtn,
+              pressed && styles.primaryCompactBtnPressed
+            ]}
+            onPress={() => {
+              SoundService.play('ui_tap');
+              setShowOfflineSetup(true);
+            }}
+          >
+            <Text style={styles.primaryCompactText}>{t.offlineBtn}</Text>
+          </Pressable>
+        </View>
       </View>
 
-      {/* Join Room 4-Character Code Modal */}
+      {/* Join Room 4-Char Code Modal */}
       <Modal
         visible={showJoinModal}
         transparent
@@ -236,11 +238,9 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.joinModalCard}>
-            <Text style={styles.modalKicker}>MULTIPLAYER CREW</Text>
-            <Text style={styles.modalTitle}>Join Online Room</Text>
-            <Text style={styles.modalSub}>
-              Enter the 4-character room code shared by the host.
-            </Text>
+            <Text style={styles.modalKicker}>{t.joinModalKicker}</Text>
+            <Text style={styles.modalTitle}>{t.joinModalTitle}</Text>
+            <Text style={styles.modalSub}>{t.joinModalSub}</Text>
 
             <TextInput
               style={styles.codeInput}
@@ -274,29 +274,44 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
               <Pressable
                 style={styles.modalCancelBtn}
                 onPress={() => {
+                  SoundService.play('ui_tap');
                   onClearError();
                   setLocalJoinError(null);
                   setShowJoinModal(false);
                 }}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={styles.modalCancelText}>{t.cancel}</Text>
               </Pressable>
 
               <Pressable
                 style={({ pressed }) => [
                   styles.modalConfirmBtn,
-                  cleanedCode.length !== 4 && styles.subOptionDisabled,
-                  pressed && cleanedCode.length === 4 && styles.subOptionPressed
+                  cleanedCode.length !== 4 && styles.btnDisabled,
+                  pressed &&
+                    cleanedCode.length === 4 &&
+                    styles.primaryCompactBtnPressed
                 ]}
                 disabled={cleanedCode.length !== 4}
                 onPress={handleSubmitJoin}
               >
-                <Text style={styles.modalConfirmText}>Join</Text>
+                <Text style={styles.modalConfirmText}>{t.joinConfirm}</Text>
               </Pressable>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Offline Pre-Game Setup Modal */}
+      <OfflineSetupModal
+        visible={showOfflineSetup}
+        initialColor={preferredColor}
+        onSelectColor={onSelectPreferredColor}
+        onClose={() => setShowOfflineSetup(false)}
+        onStartOffline={(config) => {
+          setShowOfflineSetup(false);
+          onStartOfflineMatch(config);
+        }}
+      />
 
       {/* Book Icon -> How to Play Modal */}
       <HowToPlayModal
@@ -315,12 +330,15 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
           <View style={styles.recordsModalCard}>
             <View style={styles.recordsModalHeader}>
               <View>
-                <Text style={styles.modalKicker}>SUMMIT LOGBOOK</Text>
-                <Text style={styles.modalTitle}>Personal Best Ascents</Text>
+                <Text style={styles.modalKicker}>{t.recordsKicker}</Text>
+                <Text style={styles.modalTitle}>{t.recordsTitle}</Text>
               </View>
               <Pressable
                 style={styles.recordsCloseBtn}
-                onPress={() => setShowRecordsModal(false)}
+                onPress={() => {
+                  SoundService.play('ui_tap');
+                  setShowRecordsModal(false);
+                }}
               >
                 <Text style={styles.recordsCloseText}>✕</Text>
               </Pressable>
@@ -332,271 +350,178 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
           </View>
         </View>
       </Modal>
+
+      {/* Cog Icon -> Settings Modal (EN/VI + Sound + Haptics) */}
+      <SettingsModal
+        visible={showSettingsModal}
+        soundEnabled={soundEnabled}
+        hapticsEnabled={hapticsEnabled}
+        onToggleSound={onToggleSound}
+        onToggleHaptics={onToggleHaptics}
+        onSelectLanguage={onSelectLanguage}
+        onClose={() => setShowSettingsModal(false)}
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  wrapper: {
-    gap: 14
-  },
-  stageCard: {
-    backgroundColor: '#12213A',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: '#263F66',
-    overflow: 'hidden',
-    position: 'relative'
-  },
-  bgPeakLeft: {
-    position: 'absolute',
-    bottom: -56,
-    left: -16,
-    width: 124,
-    height: 124,
-    backgroundColor: '#182C4D',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 10
-  },
-  bgPeakCenter: {
-    position: 'absolute',
-    bottom: -64,
-    left: '34%',
-    width: 142,
-    height: 142,
-    backgroundColor: '#1D355C',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 12,
-    overflow: 'hidden'
-  },
-  bgPeakCenterSnow: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'rgba(241, 245, 249, 0.2)'
-  },
-  bgPeakRight: {
-    position: 'absolute',
-    bottom: -60,
-    right: -18,
-    width: 130,
-    height: 130,
-    backgroundColor: '#172A49',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 10
-  },
-  stageContentRow: {
-    flexDirection: 'row',
+  homeStage: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 14
+    position: 'relative',
+    paddingBottom: 36
   },
-  stageCopyCol: {
-    flex: 1
-  },
-  goalBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(251, 191, 36, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(251, 191, 36, 0.42)',
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginBottom: 8
-  },
-  goalBadgeText: {
-    color: '#FBBF24',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.9
-  },
-  stageHeadline: {
-    color: '#F8FAFC',
-    fontSize: 22,
-    fontWeight: '900',
-    marginBottom: 5
-  },
-  stageSub: {
-    color: '#94A3B8',
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600'
-  },
-  sideActionCol: {
+  rightEdgeDock: {
+    position: 'absolute',
+    right: 4,
+    top: 10,
     gap: 10,
-    alignItems: 'center'
+    zIndex: 10
   },
-  circleIconBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#0E1B30',
+  dockIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(13, 25, 46, 0.92)',
     borderWidth: 1.5,
-    borderColor: '#38BDF8',
-    borderBottomWidth: 4,
-    borderBottomColor: '#0369A1',
+    borderBottomWidth: 3.5,
     alignItems: 'center',
     justifyContent: 'center'
   },
-  circleTrophyBtn: {
+  dockBookBtn: {
+    borderColor: '#38BDF8',
+    borderBottomColor: '#0369A1'
+  },
+  dockTrophyBtn: {
     borderColor: '#FBBF24',
     borderBottomColor: '#B45309'
   },
-  circleIconBtnPressed: {
+  dockSettingsBtn: {
+    borderColor: '#94A3B8',
+    borderBottomColor: '#334155'
+  },
+  dockIconBtnPressed: {
     transform: [{ translateY: 2 }],
     borderBottomWidth: 2
   },
-  circleIconGlyph: {
-    fontSize: 21
+  dockIconGlyph: {
+    fontSize: 18
   },
-  modesColumn: {
-    gap: 12
+  centerColumn: {
+    width: '100%',
+    alignItems: 'center'
   },
-  modePrimaryBtn: {
-    borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
+  floatingTitleZone: {
+    alignItems: 'center',
+    marginBottom: 34,
+    paddingHorizontal: 16
+  },
+  floatingKicker: {
+    color: '#7DD3FC',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+    marginBottom: 6,
+    textShadowColor: 'rgba(6, 11, 22, 0.9)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4
+  },
+  floatingTitle: {
+    color: '#F8FAFC',
+    fontSize: 44,
+    fontWeight: '900',
+    letterSpacing: 3,
+    textAlign: 'center',
+    textShadowColor: 'rgba(2, 132, 199, 0.55)',
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 10
+  },
+  narrowButtonStack: {
+    width: '64%',
+    maxWidth: 248,
+    minWidth: 196,
+    gap: 12,
+    alignSelf: 'center'
+  },
+  primaryCompactBtn: {
+    width: '100%',
+    paddingVertical: 15,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1.5,
     borderBottomWidth: 5
   },
-  modeBtnPressed: {
+  primaryCompactBtnPressed: {
     transform: [{ translateY: 2 }],
     borderBottomWidth: 3
   },
-  onlineBtn: {
+  onlinePrimaryBtn: {
     backgroundColor: '#0284C7',
     borderColor: '#7DD3FC',
     borderBottomColor: '#075985'
   },
-  onlineBtnExpanded: {
+  onlinePrimaryBtnExpanded: {
     backgroundColor: '#0369A1'
   },
-  offlineBtn: {
+  offlinePrimaryBtn: {
     backgroundColor: '#EA580C',
     borderColor: '#FDBA74',
     borderBottomColor: '#9A3412'
   },
-  modeBtnMainRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  modeBtnTitle: {
+  primaryCompactText: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '900',
     letterSpacing: 1.2
   },
-  modeBtnSub: {
-    color: '#E0F2FE',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2
+  onlineSubStack: {
+    width: '100%',
+    gap: 8,
+    paddingVertical: 4
   },
-  offlineBtnSub: {
-    color: '#FFEDD5',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2
-  },
-  modeChevronPill: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  modeChevronText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '900'
-  },
-  playGoPill: {
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12
-  },
-  playGoPillText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  onlineDrawer: {
-    backgroundColor: '#0E1A2E',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#26426B',
-    gap: 10,
-    marginTop: -4
-  },
-  offlineNoticeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(127, 29, 29, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(248, 113, 113, 0.4)'
-  },
-  offlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#F87171',
-    marginRight: 8
-  },
-  offlineNoticeText: {
-    flex: 1,
+  serverStatusCaption: {
     color: '#FECACA',
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
     lineHeight: 15
   },
-  onlineSubActionsRow: {
+  onlineSubRow: {
     flexDirection: 'row',
-    gap: 10
+    gap: 8
   },
-  subOptionBtn: {
+  onlineSubBtn: {
     flex: 1,
-    paddingVertical: 13,
-    paddingHorizontal: 12,
-    borderRadius: 13,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderBottomWidth: 4
+    borderBottomWidth: 3.5
   },
-  createRoomBtn: {
+  createSubBtn: {
     backgroundColor: '#059669',
     borderColor: '#6EE7B7',
     borderBottomColor: '#065F46'
   },
-  joinRoomBtn: {
+  joinSubBtn: {
     backgroundColor: '#1D4ED8',
     borderColor: '#93C5FD',
     borderBottomColor: '#1E3A8A'
   },
-  subOptionPressed: {
-    transform: [{ translateY: 2 }],
-    borderBottomWidth: 2
-  },
-  subOptionDisabled: {
-    opacity: 0.4
-  },
-  subOptionTitle: {
+  onlineSubBtnText: {
     color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '900'
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center'
   },
-  subOptionHint: {
-    color: 'rgba(255, 255, 255, 0.82)',
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 2
+  btnDisabled: {
+    opacity: 0.42
   },
   modalBackdrop: {
     flex: 1,

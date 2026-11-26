@@ -39,12 +39,15 @@ export class RoomManager {
     return code;
   }
 
-  public createRoom(hostPlayerId: string, hostPlayerName: string): Room {
-    // If the host is in an existing room, leave it first
+  public createRoom(
+    hostPlayerId: string,
+    hostPlayerName: string,
+    preferredColor?: string
+  ): Room {
     this.leaveCurrentRoom(hostPlayerId);
 
     const code = this.generateRoomCode();
-    const room = new Room(code, hostPlayerId, hostPlayerName);
+    const room = new Room(code, hostPlayerId, hostPlayerName, preferredColor);
     this.rooms.set(code, room);
     this.playerRoomIndex.set(hostPlayerId, code);
     return room;
@@ -63,13 +66,14 @@ export class RoomManager {
   public joinOrCreateRoom(
     playerId: string,
     playerName: string,
-    requestedCode?: string
+    requestedCode?: string,
+    preferredColor?: string
   ): { success: boolean; room?: Room; error?: string } {
     const existingCode = this.playerRoomIndex.get(playerId);
 
     if (!requestedCode || requestedCode.trim() === '') {
       this.leaveCurrentRoom(playerId);
-      const room = this.createRoom(playerId, playerName);
+      const room = this.createRoom(playerId, playerName, preferredColor);
       return { success: true, room };
     }
 
@@ -87,7 +91,11 @@ export class RoomManager {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
 
-    const joinResult = existingRoom.addPlayer(playerId, playerName);
+    const joinResult = existingRoom.addPlayer(
+      playerId,
+      playerName,
+      preferredColor
+    );
     if (!joinResult.success) {
       return { success: false, error: joinResult.error };
     }

@@ -12,24 +12,39 @@ import {
   View
 } from 'react-native';
 import {
+  BotDifficulty,
+  CLIMBER_COLORS,
+  DEFAULT_MATCH_SETTINGS,
   DeviceIdentity,
   GAME_CONSTANTS,
   generateRandomSeed,
   MatchFinishedPayload,
+  MatchSettings,
   Player,
   RoomState
 } from '@climb/shared';
+import { ClimberAvatar } from './src/components/MountainArtwork';
+import { OfflineLaunchConfig } from './src/components/OfflineSetupModal';
 import {
   getOrCreateDeviceIdentity,
   updateNickname
 } from './src/db/identityService';
+import {
+  AppLanguage,
+  DEFAULT_USER_PREFERENCES,
+  getOrCreatePreferences,
+  updatePreferences,
+  UserPreferences
+} from './src/db/preferencesService';
 import { getAllLocalRecords } from './src/db/scoreService';
 import { useMultiplayerLobby } from './src/hooks/useMultiplayerLobby';
-import { LobbyScreen } from './src/screens/LobbyScreen';
-import { WaitingRoomScreen } from './src/screens/WaitingRoomScreen';
+import { LanguageProvider } from './src/i18n/LanguageContext';
+import { TRANSLATIONS } from './src/i18n/translations';
 import { GameScreen } from './src/screens/GameScreen';
+import { LobbyScreen } from './src/screens/LobbyScreen';
 import { ResultsScreen } from './src/screens/ResultsScreen';
-import { HapticsService } from './src/haptics/hapticsService';
+import { WaitingRoomScreen } from './src/screens/WaitingRoomScreen';
+import { SoundService } from './src/services/soundService';
 
 const SERVER_URL =
   process.env.EXPO_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
@@ -39,11 +54,15 @@ type OfflinePhase = 'NONE' | 'COUNTDOWN' | 'PLAYING' | 'FINISHED';
 function buildOfflineRoomState(
   playerId: string,
   playerName: string,
+  playerColor: string,
+  settings: MatchSettings,
   seed: number,
   phase: 'COUNTDOWN' | 'PLAYING' | 'FINISHED'
 ): RoomState {
   const now = Date.now();
   const baseX = GAME_CONSTANTS.WORLD_WIDTH * 0.5;
+  const remainingColors = CLIMBER_COLORS.filter((c) => c !== playerColor);
+
   const players: Player[] = [
     {
       id: playerId,
@@ -51,7 +70,7 @@ function buildOfflineRoomState(
       name: playerName,
       isHost: true,
       isReady: true,
-      color: '#3B82F6',
+      color: playerColor,
       height: 0,
       x: baseX,
       y: 0,
@@ -66,7 +85,7 @@ function buildOfflineRoomState(
       name: 'FrostBot',
       isHost: false,
       isReady: true,
-      color: '#EF4444',
+      color: remainingColors[0] ?? '#EF4444',
       height: 0,
       x: baseX,
       y: 0,
@@ -81,7 +100,7 @@ function buildOfflineRoomState(
       name: 'CragHopper',
       isHost: false,
       isReady: true,
-      color: '#10B981',
+      color: remainingColors[1] ?? '#10B981',
       height: 0,
       x: baseX,
       y: 0,
@@ -96,7 +115,7 @@ function buildOfflineRoomState(
       name: 'PeakRunner',
       isHost: false,
       isReady: true,
-      color: '#F59E0B',
+      color: remainingColors[2] ?? '#F59E0B',
       height: 0,
       x: baseX,
       y: 0,
@@ -115,10 +134,12 @@ function buildOfflineRoomState(
     players,
     maxPlayers: 4,
     minPlayers: 1,
+    settings: { ...settings },
     config: {
       seed,
       targetHeight: 500,
-      countdownSec: 3
+      countdownSec: 3,
+      settings: { ...settings }
     },
     seed,
     targetHeight: 500,
@@ -133,7 +154,9 @@ function buildOfflineRoomState(
 
 export default function App(): React.JSX.Element {
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
+  const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_USER_PREFERENCES);
   const [isInitializing, setIsInitializing] = useState(true);
+
   const [isEditingNickname, setIsEditingNickname] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [nicknameError, setNicknameError] = useState<string | null>(null);
@@ -142,23 +165,40 @@ export default function App(): React.JSX.Element {
   const [showDevModal, setShowDevModal] = useState(false);
   const [sqliteRecordCount, setSqliteRecordCount] = useState<number>(0);
 
-  // Offline Solo + 3 AI Bots Lifecycle
+  // Offline Solo + 3 AI Bots Lifecycle & Saved Setup Config
   const [offlinePhase, setOfflinePhase] = useState<OfflinePhase>('NONE');
   const [offlineCountdown, setOfflineCountdown] = useState<number>(3);
   const [offlineRoom, setOfflineRoom] = useState<RoomState | null>(null);
+  const [offlineDifficulty, setOfflineDifficulty] =
+    useState<BotDifficulty>('MEDIUM');
+  const [lastOfflineConfig, setLastOfflineConfig] = useState<OfflineLaunchConfig>(
+    {
+      playerColor: DEFAULT_USER_PREFERENCES.preferredColor,
+      botDifficulty: 'MEDIUM',
+      settings: { ...DEFAULT_MATCH_SETTINGS }
+    }
+  );
   const [offlineResult, setOfflineResult] =
     useState<MatchFinishedPayload | null>(null);
   const offlineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Initialize SQLite device identity on startup
+  // Initialize SQLite device identity & user preferences on startup
   useEffect(() => {
     async function init() {
       try {
-        const id = await getOrCreateDeviceIdentity();
+        const [id, loadedPrefs] = await Promise.all([
+          getOrCreateDeviceIdentity(),
+          getOrCreatePreferences()
+        ]);
         setIdentity(id);
         setNicknameDraft(id.nickname);
+        setPrefs(loadedPrefs);
+        SoundService.configure({
+          soundEnabled: loadedPrefs.soundEnabled,
+          hapticsEnabled: loadedPrefs.hapticsEnabled
+        });
       } catch (err) {
-        console.warn('Failed to initialize SQLite identity:', err);
+        console.warn('Failed to initialize SQLite startup state:', err);
       } finally {
         setIsInitializing(false);
       }
@@ -179,6 +219,7 @@ export default function App(): React.JSX.Element {
     };
   }, [clearOfflineTimer]);
 
+  const t = TRANSLATIONS[prefs.language];
   const playerId = identity?.guestUuid ?? 'guest-loading';
   const playerName = identity?.nickname ?? 'Climber';
 
@@ -190,6 +231,8 @@ export default function App(): React.JSX.Element {
     matchResult,
     error,
     joinOrCreateRoom,
+    selectPlayerColor,
+    updateRoomSettings,
     toggleReady,
     startMatch,
     sendPlayerMove,
@@ -199,13 +242,32 @@ export default function App(): React.JSX.Element {
   } = useMultiplayerLobby({
     serverUrl: SERVER_URL,
     playerId,
-    playerName
+    playerName,
+    preferredColor: prefs.preferredColor
   });
+
+  const handleUpdatePrefs = useCallback(
+    async (patch: Partial<UserPreferences>) => {
+      const optimistic: UserPreferences = { ...prefs, ...patch };
+      setPrefs(optimistic);
+      SoundService.configure({
+        soundEnabled: optimistic.soundEnabled,
+        hapticsEnabled: optimistic.hapticsEnabled
+      });
+      try {
+        const saved = await updatePreferences(patch);
+        setPrefs(saved);
+      } catch (err) {
+        console.warn('Failed saving preferences to SQLite:', err);
+      }
+    },
+    [prefs]
+  );
 
   const handleSaveNickname = async () => {
     const trimmed = nicknameDraft.trim();
     if (!trimmed) {
-      setNicknameError('Nickname cannot be empty');
+      setNicknameError(t.nicknameEmptyError);
       return;
     }
 
@@ -215,15 +277,15 @@ export default function App(): React.JSX.Element {
       setNicknameDraft(updated.nickname);
       setNicknameError(null);
       setIsEditingNickname(false);
-      void HapticsService.selection();
+      SoundService.play('ui_tap');
     } catch (err) {
       console.warn('Failed saving nickname to SQLite:', err);
-      setNicknameError('Could not save nickname');
+      setNicknameError(t.nicknameSaveError);
     }
   };
 
   const handleOpenDevModal = useCallback(async () => {
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
     try {
       const records = await getAllLocalRecords();
       setSqliteRecordCount(records.length);
@@ -233,49 +295,56 @@ export default function App(): React.JSX.Element {
     setShowDevModal(true);
   }, []);
 
-  // Launch fresh Offline match (3-2-1 quick countdown -> GameScreen with 3 AI bots)
-  const startOfflineRace = useCallback(() => {
-    clearOfflineTimer();
-    const freshSeed = generateRandomSeed();
-    const initialRoom = buildOfflineRoomState(
-      playerId,
-      playerName,
-      freshSeed,
-      'COUNTDOWN'
-    );
-
-    setOfflineResult(null);
-    setOfflineRoom(initialRoom);
-    setOfflineCountdown(3);
-    setOfflinePhase('COUNTDOWN');
-    void HapticsService.warning();
-
-    let remaining = 3;
-    offlineTimerRef.current = setInterval(() => {
-      remaining -= 1;
-      if (remaining > 0) {
-        setOfflineCountdown(remaining);
-        void HapticsService.warning();
-        return;
-      }
-
+  const launchOfflineWithConfig = useCallback(
+    (config: OfflineLaunchConfig) => {
       clearOfflineTimer();
-      const playingRoom: RoomState = {
-        ...initialRoom,
-        phase: 'PLAYING',
-        status: 'PLAYING',
-        countdownRemaining: null,
-        startedAt: Date.now(),
-        players: initialRoom.players.map((p) => ({
-          ...p,
-          status: 'CLIMBING'
-        }))
-      };
-      setOfflineRoom(playingRoom);
-      setOfflinePhase('PLAYING');
-      void HapticsService.springBoost();
-    }, 750);
-  }, [clearOfflineTimer, playerId, playerName]);
+      setLastOfflineConfig(config);
+      setOfflineDifficulty(config.botDifficulty);
+
+      const freshSeed = generateRandomSeed();
+      const initialRoom = buildOfflineRoomState(
+        playerId,
+        playerName,
+        config.playerColor,
+        config.settings,
+        freshSeed,
+        'COUNTDOWN'
+      );
+
+      setOfflineResult(null);
+      setOfflineRoom(initialRoom);
+      setOfflineCountdown(3);
+      setOfflinePhase('COUNTDOWN');
+      SoundService.play('countdown_tick');
+
+      let remaining = 3;
+      offlineTimerRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining > 0) {
+          setOfflineCountdown(remaining);
+          SoundService.play('countdown_tick');
+          return;
+        }
+
+        clearOfflineTimer();
+        const playingRoom: RoomState = {
+          ...initialRoom,
+          phase: 'PLAYING',
+          status: 'PLAYING',
+          countdownRemaining: null,
+          startedAt: Date.now(),
+          players: initialRoom.players.map((p) => ({
+            ...p,
+            status: 'CLIMBING'
+          }))
+        };
+        setOfflineRoom(playingRoom);
+        setOfflinePhase('PLAYING');
+        SoundService.play('match_go');
+      }, 750);
+    },
+    [clearOfflineTimer, playerId, playerName]
+  );
 
   const handleOfflineFinished = useCallback(
     (finishedPayload: MatchFinishedPayload) => {
@@ -292,7 +361,7 @@ export default function App(): React.JSX.Element {
     setOfflinePhase('NONE');
     setOfflineRoom(null);
     setOfflineResult(null);
-    void HapticsService.selection();
+    SoundService.play('ui_tap');
   }, [clearOfflineTimer]);
 
   if (isInitializing) {
@@ -304,346 +373,367 @@ export default function App(): React.JSX.Element {
             <Text style={styles.loadingPeakGlyph}>▲</Text>
           </View>
           <Text style={styles.loadingTitle}>WAY UP!</Text>
-          <Text style={styles.loadingText}>Preparing Climbing Gear...</Text>
         </View>
       </SafeAreaView>
     );
   }
-
-  // Dedicated full-viewport container during Online PLAYING phase
-  if (roomState && roomState.phase === 'PLAYING') {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="light-content" />
-        {error && (
-          <TouchableOpacity
-            style={styles.playingErrorBanner}
-            onPress={clearError}
-          >
-            <Text style={styles.errorText}>{error}</Text>
-            <Text style={styles.errorDismiss}>Dismiss</Text>
-          </TouchableOpacity>
-        )}
-        <GameScreen
-          mode="ONLINE"
-          roomState={roomState}
-          playerId={playerId}
-          livePlayers={livePlayers}
-          onSendMove={sendPlayerMove}
-          onLeaveRoom={leaveRoom}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  // Dedicated full-viewport container during Offline PLAYING phase
-  if (offlinePhase === 'PLAYING' && offlineRoom) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="light-content" />
-        <GameScreen
-          mode="OFFLINE"
-          roomState={offlineRoom}
-          playerId={playerId}
-          livePlayers={[]}
-          onSendMove={() => {
-            // Local offline run requires no socket emits
-          }}
-          onOfflineFinish={handleOfflineFinished}
-          onLeaveRoom={exitOfflineMode}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  const isInOnlineRoom = roomState !== null;
-  const isInOfflineFlow = offlinePhase !== 'NONE';
-  const canEditProfile = !isInOnlineRoom && !isInOfflineFlow;
-  const isConnected =
-    connectionState === 'CONNECTED' || connectionState === 'IN_ROOM';
-
-  const statusLabel =
-    connectionState === 'IN_ROOM'
-      ? 'IN LOBBY'
-      : connectionState === 'CONNECTED'
-      ? 'ONLINE'
-      : connectionState === 'CONNECTING'
-      ? 'CONNECTING'
-      : 'OFFLINE';
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
-
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Atmospheric Alpine Hero Header (Long-press WAY UP! ~1.2s for quiet Dev Info Modal) */}
-        <View style={styles.heroBanner}>
-          <View style={[styles.starDot, { top: 14, left: 32 }]} />
-          <View style={[styles.starDot, { top: 22, right: 86 }]} />
-          <View style={[styles.starDot, { top: 12, right: 150 }]} />
-          <View style={styles.mountainFarLeft} />
-          <View style={styles.mountainFarRight} />
-          <View style={styles.mountainCenterPeak}>
-            <View style={styles.mountainSnowCap} />
-          </View>
-
-          <View style={styles.headerTopRow}>
-            <Pressable
-              delayLongPress={1200}
-              onLongPress={() => {
-                void handleOpenDevModal();
-              }}
-              style={styles.brandRow}
+    <LanguageProvider
+      language={prefs.language}
+      onChangeLanguage={(lang: AppLanguage) => {
+        void handleUpdatePrefs({ language: lang });
+      }}
+    >
+      {/* Dedicated full-viewport container during Online PLAYING phase */}
+      {roomState && roomState.phase === 'PLAYING' ? (
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="light-content" />
+          {error && (
+            <TouchableOpacity
+              style={styles.playingErrorBanner}
+              onPress={clearError}
             >
-              <View style={styles.logoEmblem}>
-                <View style={styles.logoPeakShape} />
-                <View style={styles.logoSnowTip} />
-              </View>
-              <View>
-                <Text style={styles.appTitle}>WAY UP!</Text>
-                <Text style={styles.appSubtitle}>ALPINE SUMMIT RACE</Text>
-              </View>
-            </Pressable>
-
-            <View style={styles.connectionBadge}>
-              <View
-                style={[
-                  styles.statusDot,
-                  connectionState === 'IN_ROOM'
-                    ? styles.dotGreen
-                    : connectionState === 'CONNECTED'
-                    ? styles.dotBlue
-                    : styles.dotGray
-                ]}
-              />
-              <Text style={styles.connectionText}>{statusLabel}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Tap-Anywhere Player Name Profile Pill (Subtle pencil icon ✎, no standalone Edit/Info buttons) */}
-        {identity && (
-          <View style={styles.profileCard}>
-            {isEditingNickname ? (
-              <View style={styles.nicknameEditRow}>
-                <TextInput
-                  style={styles.nicknameInput}
-                  value={nicknameDraft}
-                  onChangeText={setNicknameDraft}
-                  maxLength={20}
-                  autoFocus
-                  placeholder="Climber nickname"
-                  placeholderTextColor="#64748B"
-                  returnKeyType="done"
-                  onSubmitEditing={() => {
-                    void handleSaveNickname();
-                  }}
-                />
-                <Pressable
-                  style={styles.saveBtn}
-                  onPress={() => {
-                    void handleSaveNickname();
-                  }}
-                >
-                  <Text style={styles.saveBtnText}>Save</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.cancelBtn}
-                  onPress={() => {
-                    setNicknameDraft(identity.nickname);
-                    setNicknameError(null);
-                    setIsEditingNickname(false);
-                  }}
-                >
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable
-                disabled={!canEditProfile}
-                style={({ pressed }) => [
-                  styles.profilePressableZone,
-                  pressed && canEditProfile && styles.profilePressableActive
-                ]}
-                onPress={() => {
-                  void HapticsService.selection();
-                  setNicknameDraft(identity.nickname);
-                  setNicknameError(null);
-                  setIsEditingNickname(true);
-                }}
-              >
-                <View style={styles.climberAvatar}>
-                  <View style={styles.avatarHeadlamp} />
-                  <View style={styles.avatarGoggles} />
-                </View>
-
-                <View style={styles.profileTextCol}>
-                  <Text style={styles.profileKicker}>CLIMBER</Text>
-                  <View style={styles.nameWithPencilRow}>
-                    <Text style={styles.profileNickname} numberOfLines={1}>
-                      {identity.nickname}
-                    </Text>
-                    {canEditProfile && (
-                      <Text style={styles.pencilGlyph}>✎</Text>
-                    )}
-                  </View>
-                </View>
-              </Pressable>
-            )}
-
-            {nicknameError && (
-              <Text style={styles.nicknameErrorText}>{nicknameError}</Text>
-            )}
-          </View>
-        )}
-
-        {/* Error Banner (when outside Join Modal) */}
-        {error && isInOnlineRoom && (
-          <TouchableOpacity style={styles.errorBanner} onPress={clearError}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Text style={styles.errorDismiss}>Dismiss</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Home Screen (when neither in Online room nor Offline results) */}
-        {!roomState && offlinePhase !== 'FINISHED' && (
-          <LobbyScreen
-            playerId={playerId}
-            isConnecting={connectionState === 'CONNECTING'}
-            isConnected={isConnected}
-            serverError={error}
-            onClearError={clearError}
-            onCreateOnlineRoom={() =>
-              joinOrCreateRoom(undefined, identity?.nickname)
-            }
-            onJoinOnlineRoom={(code) =>
-              joinOrCreateRoom(code, identity?.nickname)
-            }
-            onStartOfflineMatch={startOfflineRace}
-          />
-        )}
-
-        {/* Online Waiting Room */}
-        {roomState &&
-          (roomState.phase === 'WAITING' ||
-            roomState.phase === 'COUNTDOWN') && (
-            <WaitingRoomScreen
-              roomState={roomState}
-              playerId={playerId}
-              countdownSeconds={countdownSeconds}
-              onToggleReady={toggleReady}
-              onStartMatch={startMatch}
-              onLeaveRoom={leaveRoom}
-            />
+              <Text style={styles.errorText}>{error}</Text>
+              <Text style={styles.errorDismiss}>{t.dismiss}</Text>
+            </TouchableOpacity>
           )}
-
-        {/* Online Match Results */}
-        {roomState && roomState.phase === 'FINISHED' && (
-          <ResultsScreen
+          <GameScreen
+            mode="ONLINE"
             roomState={roomState}
-            matchResult={matchResult}
             playerId={playerId}
-            onRematch={requestRematch}
+            livePlayers={livePlayers}
+            onSendMove={sendPlayerMove}
             onLeaveRoom={leaveRoom}
           />
-        )}
-
-        {/* Offline Bot Race Results */}
-        {!roomState && offlinePhase === 'FINISHED' && offlineRoom && (
-          <ResultsScreen
-            isOffline
+        </SafeAreaView>
+      ) : offlinePhase === 'PLAYING' && offlineRoom ? (
+        /* Dedicated full-viewport container during Offline PLAYING phase */
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="light-content" />
+          <GameScreen
+            mode="OFFLINE"
+            botDifficulty={offlineDifficulty}
             roomState={offlineRoom}
-            matchResult={offlineResult}
             playerId={playerId}
-            onRematch={startOfflineRace}
+            livePlayers={[]}
+            onSendMove={() => {
+              // Local offline run requires no socket emits
+            }}
+            onOfflineFinish={handleOfflineFinished}
             onLeaveRoom={exitOfflineMode}
           />
-        )}
-      </ScrollView>
+        </SafeAreaView>
+      ) : (
+        /* Non-Playing Screens: Full-Screen Atmospheric Mountain Backdrop + Top-Edge Profile Pill */
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="light-content" />
 
-      {/* Offline Quick 3-2-1 Countdown Modal */}
-      <Modal
-        visible={offlinePhase === 'COUNTDOWN'}
-        transparent
-        animationType="fade"
-        onRequestClose={exitOfflineMode}
-      >
-        <View style={styles.countdownBackdrop}>
-          <View style={styles.countdownCard}>
-            <Text style={styles.countdownKicker}>
-              OFFLINE RACE • VS 3 AI CLIMBERS
-            </Text>
-            <Text style={styles.countdownBigNumber}>{offlineCountdown}</Text>
-            <Text style={styles.countdownRivalsText}>
-              Rivals: FrostBot • CragHopper • PeakRunner
-            </Text>
+          {/* Persistent Full-Screen Alpine Night Sky & Snowy Mountain Backdrop */}
+          <View pointerEvents="none" style={styles.backdropLayer}>
+            <View style={[styles.starDot, { top: '12%', left: '16%' }]} />
+            <View style={[styles.starDot, { top: '18%', right: '24%' }]} />
+            <View style={[styles.starDot, { top: '27%', left: '72%' }]} />
+            <View style={[styles.starDot, { top: '34%', left: '12%' }]} />
+            <View style={styles.bgMountainLeft}>
+              <View style={styles.bgMountainSnow} />
+            </View>
+            <View style={styles.bgMountainRight}>
+              <View style={styles.bgMountainSnow} />
+            </View>
+            <View style={styles.bgMountainCenter}>
+              <View style={styles.bgMountainCenterSnow} />
+            </View>
           </View>
-        </View>
-      </Modal>
 
-      {/* Quiet Long-Press Dev Info Modal (Grading & Technical Inspection) */}
-      <Modal
-        visible={showDevModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDevModal(false)}
-      >
-        <View style={styles.countdownBackdrop}>
-          <View style={styles.devModalCard}>
-            <Text style={styles.devModalKicker}>DIAGNOSTICS & GRADING INFO</Text>
-            <Text style={styles.devModalTitle}>Way Up! Client Inspector</Text>
+          {/* Top Edge Bar: Tap-Anywhere Player Name Pill + Connection Indicator */}
+          <View style={styles.topEdgeBar}>
+            {identity && (
+              <View style={styles.topProfileWrap}>
+                {isEditingNickname ? (
+                  <View style={styles.nicknameEditRow}>
+                    <TextInput
+                      style={styles.nicknameInput}
+                      value={nicknameDraft}
+                      onChangeText={setNicknameDraft}
+                      maxLength={20}
+                      autoFocus
+                      placeholder={t.nicknamePlaceholder}
+                      placeholderTextColor="#64748B"
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        void handleSaveNickname();
+                      }}
+                    />
+                    <Pressable
+                      style={styles.saveBtn}
+                      onPress={() => {
+                        void handleSaveNickname();
+                      }}
+                    >
+                      <Text style={styles.saveBtnText}>{t.save}</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.cancelBtn}
+                      onPress={() => {
+                        setNicknameDraft(identity.nickname);
+                        setNicknameError(null);
+                        setIsEditingNickname(false);
+                      }}
+                    >
+                      <Text style={styles.cancelBtnText}>✕</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    disabled={roomState !== null || offlinePhase !== 'NONE'}
+                    style={({ pressed }) => [
+                      styles.topNamePill,
+                      pressed && styles.topNamePillPressed
+                    ]}
+                    onPress={() => {
+                      SoundService.play('ui_tap');
+                      setNicknameDraft(identity.nickname);
+                      setNicknameError(null);
+                      setIsEditingNickname(true);
+                    }}
+                  >
+                    <View style={styles.miniAvatarCircle}>
+                      <ClimberAvatar
+                        jacketColor={prefs.preferredColor}
+                        scale={0.58}
+                      />
+                    </View>
+                    <Text style={styles.topNicknameText} numberOfLines={1}>
+                      {identity.nickname}
+                    </Text>
+                    {!roomState && offlinePhase === 'NONE' && (
+                      <Text style={styles.pencilGlyph}>✎</Text>
+                    )}
+                  </Pressable>
+                )}
+              </View>
+            )}
 
-            <View style={styles.devRow}>
-              <Text style={styles.devKey}>Guest UUIDv4</Text>
-              <Text style={styles.devVal} selectable>
-                {identity?.guestUuid ?? 'N/A'}
-              </Text>
+            {!isEditingNickname && (
+              <View style={styles.connectionBadge}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    connectionState === 'IN_ROOM'
+                      ? styles.dotGreen
+                      : connectionState === 'CONNECTED'
+                      ? styles.dotBlue
+                      : styles.dotGray
+                  ]}
+                />
+                <Text style={styles.connectionText}>
+                  {connectionState === 'IN_ROOM'
+                    ? t.statusInLobby
+                    : connectionState === 'CONNECTED'
+                    ? t.statusOnline
+                    : connectionState === 'CONNECTING'
+                    ? t.statusConnecting
+                    : t.statusOffline}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {nicknameError && (
+            <Text style={styles.nicknameErrorBanner}>{nicknameError}</Text>
+          )}
+
+          {/* Home Screen Layout (no ScrollView box needed; floating centered elements) */}
+          {!roomState && offlinePhase !== 'FINISHED' ? (
+            <View style={styles.homeBodyWrap}>
+              <LobbyScreen
+                playerId={playerId}
+                preferredColor={prefs.preferredColor}
+                soundEnabled={prefs.soundEnabled}
+                hapticsEnabled={prefs.hapticsEnabled}
+                isConnecting={connectionState === 'CONNECTING'}
+                isConnected={
+                  connectionState === 'CONNECTED' ||
+                  connectionState === 'IN_ROOM'
+                }
+                serverError={error}
+                onClearError={clearError}
+                onSelectPreferredColor={(color) => {
+                  void handleUpdatePrefs({ preferredColor: color });
+                }}
+                onToggleSound={(next) => {
+                  void handleUpdatePrefs({ soundEnabled: next });
+                }}
+                onToggleHaptics={(next) => {
+                  void handleUpdatePrefs({ hapticsEnabled: next });
+                }}
+                onSelectLanguage={(lang) => {
+                  void handleUpdatePrefs({ language: lang });
+                }}
+                onLongPressTitle={() => {
+                  void handleOpenDevModal();
+                }}
+                onCreateOnlineRoom={() =>
+                  joinOrCreateRoom(
+                    undefined,
+                    identity?.nickname,
+                    prefs.preferredColor
+                  )
+                }
+                onJoinOnlineRoom={(code) =>
+                  joinOrCreateRoom(
+                    code,
+                    identity?.nickname,
+                    prefs.preferredColor
+                  )
+                }
+                onStartOfflineMatch={(config) => {
+                  void handleUpdatePrefs({
+                    preferredColor: config.playerColor
+                  });
+                  launchOfflineWithConfig(config);
+                }}
+              />
             </View>
-
-            <View style={styles.devRow}>
-              <Text style={styles.devKey}>Server Endpoint</Text>
-              <Text style={styles.devVal} selectable>
-                {SERVER_URL}
-              </Text>
-            </View>
-
-            <View style={styles.devRow}>
-              <Text style={styles.devKey}>Socket State</Text>
-              <Text style={styles.devVal}>{connectionState}</Text>
-            </View>
-
-            <View style={styles.devRow}>
-              <Text style={styles.devKey}>SQLite Records</Text>
-              <Text style={styles.devVal}>
-                {sqliteRecordCount} saved in local_records
-              </Text>
-            </View>
-
-            <Pressable
-              style={styles.devCloseBtn}
-              onPress={() => setShowDevModal(false)}
+          ) : (
+            /* Scrollable Container for Online Waiting Room & Results Screens */
+            <ScrollView
+              contentContainerStyle={styles.scrollContainer}
+              keyboardShouldPersistTaps="handled"
             >
-              <Text style={styles.devCloseBtnText}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+              {error && roomState !== null && (
+                <TouchableOpacity
+                  style={styles.errorBanner}
+                  onPress={clearError}
+                >
+                  <Text style={styles.errorText}>{error}</Text>
+                  <Text style={styles.errorDismiss}>{t.dismiss}</Text>
+                </TouchableOpacity>
+              )}
+
+              {roomState &&
+                (roomState.phase === 'WAITING' ||
+                  roomState.phase === 'COUNTDOWN') && (
+                  <WaitingRoomScreen
+                    roomState={roomState}
+                    playerId={playerId}
+                    countdownSeconds={countdownSeconds}
+                    onSelectColor={(color) => {
+                      void handleUpdatePrefs({ preferredColor: color });
+                      selectPlayerColor(color);
+                    }}
+                    onUpdateSettings={updateRoomSettings}
+                    onToggleReady={toggleReady}
+                    onStartMatch={startMatch}
+                    onLeaveRoom={leaveRoom}
+                  />
+                )}
+
+              {roomState && roomState.phase === 'FINISHED' && (
+                <ResultsScreen
+                  roomState={roomState}
+                  matchResult={matchResult}
+                  playerId={playerId}
+                  onRematch={requestRematch}
+                  onLeaveRoom={leaveRoom}
+                />
+              )}
+
+              {!roomState && offlinePhase === 'FINISHED' && offlineRoom && (
+                <ResultsScreen
+                  isOffline
+                  roomState={offlineRoom}
+                  matchResult={offlineResult}
+                  playerId={playerId}
+                  onRematch={() => launchOfflineWithConfig(lastOfflineConfig)}
+                  onLeaveRoom={exitOfflineMode}
+                />
+              )}
+            </ScrollView>
+          )}
+
+          {/* Offline Quick 3-2-1 Countdown Modal */}
+          <Modal
+            visible={offlinePhase === 'COUNTDOWN'}
+            transparent
+            animationType="fade"
+            onRequestClose={exitOfflineMode}
+          >
+            <View style={styles.countdownBackdrop}>
+              <View style={styles.countdownCard}>
+                <Text style={styles.countdownKicker}>
+                  {t.offlineCountdownKicker}
+                </Text>
+                <Text style={styles.countdownBigNumber}>{offlineCountdown}</Text>
+                <Text style={styles.countdownRivalsText}>
+                  {t.offlineRivalsLabel}
+                </Text>
+              </View>
+            </View>
+          </Modal>
+
+          {/* Quiet Long-Press Dev Info Modal (Grading & Technical Inspection) */}
+          <Modal
+            visible={showDevModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowDevModal(false)}
+          >
+            <View style={styles.countdownBackdrop}>
+              <View style={styles.devModalCard}>
+                <Text style={styles.devModalKicker}>
+                  DIAGNOSTICS & GRADING INFO
+                </Text>
+                <Text style={styles.devModalTitle}>
+                  Way Up! Client Inspector
+                </Text>
+
+                <View style={styles.devRow}>
+                  <Text style={styles.devKey}>Guest UUIDv4</Text>
+                  <Text style={styles.devVal} selectable>
+                    {identity?.guestUuid ?? 'N/A'}
+                  </Text>
+                </View>
+
+                <View style={styles.devRow}>
+                  <Text style={styles.devKey}>Server Endpoint</Text>
+                  <Text style={styles.devVal} selectable>
+                    {SERVER_URL}
+                  </Text>
+                </View>
+
+                <View style={styles.devRow}>
+                  <Text style={styles.devKey}>Socket State</Text>
+                  <Text style={styles.devVal}>{connectionState}</Text>
+                </View>
+
+                <View style={styles.devRow}>
+                  <Text style={styles.devKey}>SQLite Records</Text>
+                  <Text style={styles.devVal}>
+                    {sqliteRecordCount} saved in local_records
+                  </Text>
+                </View>
+
+                <Pressable
+                  style={styles.devCloseBtn}
+                  onPress={() => setShowDevModal(false)}
+                >
+                  <Text style={styles.devCloseBtnText}>{t.close}</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+        </SafeAreaView>
+      )}
+    </LanguageProvider>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#09111E'
-  },
-  container: {
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 28
+    backgroundColor: '#081020'
   },
   centered: {
     flex: 1,
@@ -670,119 +760,165 @@ const styles = StyleSheet.create({
     color: '#F8FAFC',
     fontSize: 22,
     fontWeight: '900',
-    letterSpacing: 1.5,
-    marginBottom: 4
+    letterSpacing: 1.5
   },
-  loadingText: {
-    color: '#94A3B8',
-    fontSize: 14,
-    fontWeight: '600'
-  },
-  heroBanner: {
-    backgroundColor: '#101E36',
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 18,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#243B5E',
+  backdropLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     overflow: 'hidden'
   },
   starDot: {
     position: 'absolute',
     width: 3,
     height: 3,
-    borderRadius: 2,
-    backgroundColor: '#BAE6FD',
+    borderRadius: 1.5,
+    backgroundColor: '#E0F2FE',
     opacity: 0.55
   },
-  mountainFarLeft: {
+  bgMountainLeft: {
     position: 'absolute',
-    bottom: -48,
-    left: -10,
-    width: 110,
-    height: 110,
-    backgroundColor: '#162947',
+    bottom: -110,
+    left: -55,
+    width: 240,
+    height: 240,
+    backgroundColor: '#10203B',
+    borderRadius: 16,
     transform: [{ rotate: '45deg' }],
-    borderRadius: 8
-  },
-  mountainFarRight: {
-    position: 'absolute',
-    bottom: -56,
-    right: -12,
-    width: 126,
-    height: 126,
-    backgroundColor: '#162947',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 10
-  },
-  mountainCenterPeak: {
-    position: 'absolute',
-    bottom: -52,
-    right: 78,
-    width: 98,
-    height: 98,
-    backgroundColor: '#1D3559',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 8,
     overflow: 'hidden'
   },
-  mountainSnowCap: {
-    width: 34,
-    height: 34,
-    backgroundColor: 'rgba(224, 242, 254, 0.22)'
+  bgMountainRight: {
+    position: 'absolute',
+    bottom: -120,
+    right: -60,
+    width: 255,
+    height: 255,
+    backgroundColor: '#10203B',
+    borderRadius: 16,
+    transform: [{ rotate: '45deg' }],
+    overflow: 'hidden'
   },
-  headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
+  bgMountainSnow: {
+    width: 68,
+    height: 68,
+    backgroundColor: 'rgba(226, 232, 240, 0.14)'
   },
-  brandRow: {
+  bgMountainCenter: {
+    position: 'absolute',
+    bottom: -135,
+    alignSelf: 'center',
+    width: 290,
+    height: 290,
+    backgroundColor: '#15294A',
+    borderRadius: 20,
+    transform: [{ rotate: '45deg' }],
+    overflow: 'hidden'
+  },
+  bgMountainCenterSnow: {
+    width: 90,
+    height: 90,
+    backgroundColor: 'rgba(241, 245, 249, 0.2)'
+  },
+  topEdgeBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    paddingBottom: 6,
+    gap: 8,
+    zIndex: 15
   },
-  logoEmblem: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#0A1322',
-    borderWidth: 1.5,
-    borderColor: '#F59E0B',
+  topProfileWrap: {
+    flexShrink: 1,
+    flexGrow: 1
+  },
+  topNamePill: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(17, 31, 56, 0.92)',
+    borderRadius: 22,
+    paddingLeft: 5,
+    paddingRight: 12,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#2B456E',
+    gap: 7
+  },
+  topNamePillPressed: {
+    opacity: 0.78
+  },
+  miniAvatarCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#0A1324',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#38BDF8'
   },
-  logoPeakShape: {
-    position: 'absolute',
-    bottom: -12,
-    width: 28,
-    height: 28,
-    backgroundColor: '#38BDF8',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 3
-  },
-  logoSnowTip: {
-    position: 'absolute',
-    bottom: 4,
-    width: 10,
-    height: 10,
-    backgroundColor: '#F8FAFC',
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 1
-  },
-  appTitle: {
-    fontSize: 23,
-    fontWeight: '900',
+  topNicknameText: {
     color: '#F8FAFC',
-    letterSpacing: 1.4
+    fontSize: 14,
+    fontWeight: '900',
+    flexShrink: 1
   },
-  appSubtitle: {
-    fontSize: 10,
+  pencilGlyph: {
     color: '#7DD3FC',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  nicknameEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  nicknameInput: {
+    flex: 1,
+    backgroundColor: '#0A1220',
+    color: '#F8FAFC',
+    fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 1.2,
-    marginTop: 1
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#38BDF8'
+  },
+  saveBtn: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 8
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  cancelBtn: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 8
+  },
+  cancelBtnText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  nicknameErrorBanner: {
+    color: '#FCA5A5',
+    fontSize: 11,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    marginBottom: 4
   },
   connectionBadge: {
     flexDirection: 'row',
@@ -792,7 +928,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#2A4369'
+    borderColor: '#284166'
   },
   statusDot: {
     width: 7,
@@ -815,126 +951,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4
   },
-  profileCard: {
-    backgroundColor: '#132036',
-    borderRadius: 16,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#263B59'
-  },
-  profilePressableZone: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 10,
-    paddingVertical: 2
-  },
-  profilePressableActive: {
-    opacity: 0.78
-  },
-  climberAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#3B82F6',
-    borderWidth: 2,
-    borderColor: '#BAE6FD',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 11
-  },
-  avatarHeadlamp: {
-    width: 8,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#FEF08A',
-    marginBottom: 2
-  },
-  avatarGoggles: {
-    width: 20,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#7DD3FC'
-  },
-  profileTextCol: {
-    flex: 1
-  },
-  profileKicker: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.8
-  },
-  nameWithPencilRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginTop: 1
-  },
-  profileNickname: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#F8FAFC',
-    flexShrink: 1
-  },
-  pencilGlyph: {
-    fontSize: 14,
-    color: '#7DD3FC',
-    fontWeight: '700'
-  },
-  nicknameEditRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
-  },
-  nicknameInput: {
+  homeBodyWrap: {
     flex: 1,
-    backgroundColor: '#0A1220',
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '800',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#38BDF8'
+    paddingHorizontal: 12
   },
-  saveBtn: {
-    backgroundColor: '#0284C7',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8
-  },
-  saveBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  cancelBtn: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8
-  },
-  cancelBtnText: {
-    color: '#CBD5E1',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  nicknameErrorText: {
-    color: '#FCA5A5',
-    fontSize: 11,
-    marginTop: 6,
-    fontWeight: '600'
+  scrollContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 28
   },
   errorBanner: {
     backgroundColor: '#7F1D1D',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 14,
+    marginBottom: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',

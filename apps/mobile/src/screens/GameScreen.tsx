@@ -9,35 +9,41 @@ import {
   View
 } from 'react-native';
 import {
+  BotDifficulty,
   ClimbStep,
   createMulberry32,
+  DEFAULT_MATCH_SETTINGS,
   evaluateHazardPhase,
   evaluateSummitBlizzard,
   GAME_CONSTANTS,
   generateMountainSteps,
   getBiomeForHeight,
   MatchFinishedPayload,
+  MatchFinishReason,
   MatchRankingEntry,
   MountainBiome,
-  PlayerColor,
   PlayerMoveAction,
   PlayerStatus,
   RoomState,
   SanitizedPlayerPosition,
+  sanitizeMatchSettings,
   TapDirection
 } from '@climb/shared';
 import {
   BoulderSprite,
+  ClimberAvatar,
   SNOWY_ICE_HOLD_WIDTH,
   SNOWY_ROCK_HOLD_WIDTH,
   SnowyIceHold,
   SnowyRockHold
 } from '../components/MountainArtwork';
 import { MoveSubmission } from '../hooks/useMultiplayerLobby';
-import { HapticsService } from '../haptics/hapticsService';
+import { useLanguage } from '../i18n/LanguageContext';
+import { SoundService } from '../services/soundService';
 
 export interface GameScreenProps {
   mode?: 'ONLINE' | 'OFFLINE';
+  botDifficulty?: BotDifficulty;
   roomState: RoomState;
   playerId: string;
   livePlayers: SanitizedPlayerPosition[];
@@ -83,11 +89,6 @@ interface RivalGhost {
   status: PlayerStatus;
 }
 
-/**
- * Decoupled boulder instance committed to `activeBouldersRef`.
- * Once triggered in a lane, it NEVER cancels or despawns early regardless of how
- * fast the climber moves up or down the cliff.
- */
 interface ActiveBoulder {
   id: string;
   lane: TapDirection;
@@ -105,7 +106,7 @@ interface ActiveBoulder {
 interface OfflineBotRuntime {
   id: string;
   nickname: string;
-  color: PlayerColor;
+  color: string;
   stepIndex: number;
   visualX: number;
   visualHeight: number;
@@ -133,7 +134,7 @@ interface ClimbRuntimeState {
   boulderInvulnTimer: number;
   status: PlayerStatus;
   finishTimeMs: number | null;
-  offlineFinishDelaySec: number;
+  allFinishedDelaySec: number;
   offlineFinishDispatched: boolean;
   toast: FloatingToast | null;
   animClock: number;
@@ -151,21 +152,19 @@ interface CliffFacetSpec {
   isCrack: boolean;
 }
 
-const WORLD_WIDTH = GAME_CONSTANTS.WORLD_WIDTH; // 400
-const SLIP_LIMIT_SEC = 0.75; // 0.75s timed grip before sliding back 2 steps (-20m)
+const WORLD_WIDTH = GAME_CONSTANTS.WORLD_WIDTH;
+const SLIP_LIMIT_SEC = 0.75;
 const SLIP_LOCK_SEC = 0.3;
-const BOULDER_WARNING_SEC = 1.0; // ~1.0s pulsing top-edge warning before drop
+const BOULDER_WARNING_SEC = 1.0;
 const BOULDER_STUN_SEC = 0.45;
 const BOULDER_INVULN_SEC = 1.05;
 
-// Closer Camera FOV: 120px per 10m step -> 4 to 5 holds visible on screen
 const PIXELS_PER_METER = 12.0;
 const BOTTOM_ANCHOR_RATIO = 0.23;
 const BOULDER_SIZE_PX = 48;
 const MOVE_EMIT_INTERVAL_MS = 55;
 const CLIFF_TILE_PERIOD_PX = 760;
 
-// Deterministic tiling rock facets, fissures & clung snow patches (keeps 50% seam clear)
 const CLIFF_FACETS: readonly CliffFacetSpec[] = [
   { id: 0, leftPct: 8, baseOffsetPx: 30, widthPct: 28, heightPx: 38, rotateDeg: '-7deg', hasSnowPatch: true, isCrack: false },
   { id: 1, leftPct: 62, baseOffsetPx: 85, widthPct: 29, heightPx: 42, rotateDeg: '6deg', hasSnowPatch: true, isCrack: false },
@@ -179,7 +178,6 @@ const CLIFF_FACETS: readonly CliffFacetSpec[] = [
   { id: 9, leftPct: 61, baseOffsetPx: 590, widthPct: 28, heightPx: 38, rotateDeg: '5deg', hasSnowPatch: true, isCrack: false },
   { id: 10, leftPct: 15, baseOffsetPx: 658, widthPct: 24, heightPx: 34, rotateDeg: '6deg', hasSnowPatch: true, isCrack: false },
   { id: 11, leftPct: 65, baseOffsetPx: 715, widthPct: 25, heightPx: 32, rotateDeg: '-7deg', hasSnowPatch: true, isCrack: false },
-  // Angular rock fissure cracks
   { id: 12, leftPct: 28, baseOffsetPx: 105, widthPct: 2, heightPx: 44, rotateDeg: '24deg', hasSnowPatch: false, isCrack: true },
   { id: 13, leftPct: 72, baseOffsetPx: 240, widthPct: 2, heightPx: 48, rotateDeg: '-22deg', hasSnowPatch: false, isCrack: true },
   { id: 14, leftPct: 24, baseOffsetPx: 430, widthPct: 2, heightPx: 40, rotateDeg: '-26deg', hasSnowPatch: false, isCrack: true },
@@ -190,7 +188,6 @@ const CLIFF_FACETS: readonly CliffFacetSpec[] = [
 const EDGE_CRAGS = [0, 1, 2, 3, 4, 5, 6] as const;
 
 interface BiomePalette {
-  name: string;
   skyBg: string;
   farPeakColor: string;
   midPeakColor: string;
@@ -209,7 +206,6 @@ interface BiomePalette {
 
 const BIOME_PALETTES: Record<MountainBiome, BiomePalette> = {
   FOOTHILLS: {
-    name: 'Rocky Foothills',
     skyBg: '#192236',
     farPeakColor: '#25324D',
     midPeakColor: '#1E2940',
@@ -226,7 +222,6 @@ const BIOME_PALETTES: Record<MountainBiome, BiomePalette> = {
     pillText: '#FDE68A'
   },
   CLIFFS: {
-    name: 'Steep Cliffs',
     skyBg: '#0E1C36',
     farPeakColor: '#182F54',
     midPeakColor: '#132544',
@@ -243,7 +238,6 @@ const BIOME_PALETTES: Record<MountainBiome, BiomePalette> = {
     pillText: '#BAE6FD'
   },
   SUMMIT: {
-    name: 'Alpine Summit',
     skyBg: '#071024',
     farPeakColor: '#14294D',
     midPeakColor: '#0E1F3D',
@@ -272,155 +266,83 @@ function createSnowStreaks(): SnowStreak[] {
   }));
 }
 
-function createInitialOfflineBots(seed: number): OfflineBotRuntime[] {
-  const rng = createMulberry32(seed ^ 0x85ebca6b);
-  return [
-    {
-      id: 'ai-bot-frost',
-      nickname: 'FrostBot',
-      color: '#EF4444',
-      stepIndex: 0,
-      visualX: 0.5,
-      visualHeight: 0,
-      hop: null,
-      decisionTimer: rng.nextFloat(0.28, 0.45),
-      slipElapsed: 0,
-      stunTimer: 0,
-      status: 'CLIMBING',
-      finishTimeMs: null,
-      score: 0,
-      minTapDelay: 0.33,
-      maxTapDelay: 0.44,
-      cautionProb: 0.92,
-      mistakeProb: 0.025
-    },
-    {
-      id: 'ai-bot-crag',
-      nickname: 'CragHopper',
-      color: '#10B981',
-      stepIndex: 0,
-      visualX: 0.5,
-      visualHeight: 0,
-      hop: null,
-      decisionTimer: rng.nextFloat(0.18, 0.32),
-      slipElapsed: 0,
-      stunTimer: 0,
-      status: 'CLIMBING',
-      finishTimeMs: null,
-      score: 0,
-      minTapDelay: 0.22,
-      maxTapDelay: 0.32,
-      cautionProb: 0.68,
-      mistakeProb: 0.055
-    },
-    {
-      id: 'ai-bot-peak',
-      nickname: 'PeakRunner',
-      color: '#F59E0B',
-      stepIndex: 0,
-      visualX: 0.5,
-      visualHeight: 0,
-      hop: null,
-      decisionTimer: rng.nextFloat(0.22, 0.38),
-      slipElapsed: 0,
-      stunTimer: 0,
-      status: 'CLIMBING',
-      finishTimeMs: null,
-      score: 0,
-      minTapDelay: 0.27,
-      maxTapDelay: 0.37,
-      cautionProb: 0.84,
-      mistakeProb: 0.038
-    }
+function createInitialOfflineBots(
+  roomState: RoomState,
+  playerId: string,
+  difficulty: BotDifficulty
+): OfflineBotRuntime[] {
+  const rng = createMulberry32(roomState.seed ^ 0x85ebca6b);
+  const botPlayers = roomState.players.filter((p) => p.id !== playerId);
+
+  const presets: Record<
+    BotDifficulty,
+    readonly [
+      { min: number; max: number; caution: number; mistake: number },
+      { min: number; max: number; caution: number; mistake: number },
+      { min: number; max: number; caution: number; mistake: number }
+    ]
+  > = {
+    EASY: [
+      { min: 0.48, max: 0.64, caution: 0.72, mistake: 0.08 },
+      { min: 0.38, max: 0.52, caution: 0.56, mistake: 0.1 },
+      { min: 0.43, max: 0.58, caution: 0.66, mistake: 0.085 }
+    ],
+    MEDIUM: [
+      { min: 0.33, max: 0.44, caution: 0.9, mistake: 0.03 },
+      { min: 0.24, max: 0.34, caution: 0.68, mistake: 0.055 },
+      { min: 0.28, max: 0.38, caution: 0.82, mistake: 0.04 }
+    ],
+    HARD: [
+      { min: 0.22, max: 0.3, caution: 0.96, mistake: 0.014 },
+      { min: 0.17, max: 0.24, caution: 0.86, mistake: 0.024 },
+      { min: 0.19, max: 0.27, caution: 0.93, mistake: 0.018 }
+    ]
+  };
+
+  const tier = presets[difficulty];
+  const fallbackBots = [
+    { id: 'ai-bot-frost', nickname: 'FrostBot', color: '#EF4444' },
+    { id: 'ai-bot-crag', nickname: 'CragHopper', color: '#10B981' },
+    { id: 'ai-bot-peak', nickname: 'PeakRunner', color: '#F59E0B' }
   ];
+
+  return [0, 1, 2].map((idx) => {
+    const p = botPlayers[idx] ?? fallbackBots[idx]!;
+    const cfg = tier[idx as 0 | 1 | 2];
+    return {
+      id: p.id,
+      nickname: p.nickname,
+      color: p.color,
+      stepIndex: 0,
+      visualX: 0.5,
+      visualHeight: 0,
+      hop: null,
+      decisionTimer: rng.nextFloat(cfg.min, cfg.max + 0.08),
+      slipElapsed: 0,
+      stunTimer: 0,
+      status: 'CLIMBING',
+      finishTimeMs: null,
+      score: 0,
+      minTapDelay: cfg.min,
+      maxTapDelay: cfg.max,
+      cautionProb: cfg.caution,
+      mistakeProb: cfg.mistake
+    };
+  });
 }
 
-function formatTimer(elapsedMs: number): string {
-  const totalSec = Math.max(0, elapsedMs / 1000);
+function formatCountdownMMSS(remainingMs: number): string {
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
   const mins = Math.floor(totalSec / 60);
-  const secs = Math.floor(totalSec % 60);
-  const tenths = Math.floor((totalSec * 10) % 10);
+  const secs = totalSec % 60;
   const mm = mins < 10 ? `0${mins}` : `${mins}`;
   const ss = secs < 10 ? `0${secs}` : `${secs}`;
-  return `${mm}:${ss}.${tenths}`;
+  return `${mm}:${ss}`;
 }
-
-interface ClimberAvatarProps {
-  jacketColor: string;
-  reachLeft: boolean;
-  isHopping: boolean;
-  isStunned: boolean;
-  isGhost?: boolean;
-}
-
-const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
-  jacketColor,
-  reachLeft,
-  isHopping,
-  isStunned,
-  isGhost = false
-}) => {
-  const activeJacket = isStunned ? '#EF4444' : jacketColor;
-  const leftArmUp = reachLeft || isHopping;
-  const rightArmUp = !reachLeft || isHopping;
-
-  return (
-    <View style={[styles.climberRoot, isGhost && styles.climberGhostRoot]}>
-      <View
-        style={[
-          styles.climberPack,
-          reachLeft ? styles.packRight : styles.packLeft
-        ]}
-      />
-      <View
-        style={[
-          styles.climberArm,
-          styles.armLeft,
-          { backgroundColor: activeJacket },
-          leftArmUp && styles.armRaisedLeft
-        ]}
-      />
-      <View
-        style={[
-          styles.climberArm,
-          styles.armRight,
-          { backgroundColor: activeJacket },
-          rightArmUp && styles.armRaisedRight
-        ]}
-      />
-      <View style={styles.climberHead}>
-        <View
-          style={[styles.climberHelmet, { backgroundColor: activeJacket }]}
-        />
-        <View style={styles.climberGoggles}>
-          <View style={styles.goggleGlint} />
-        </View>
-      </View>
-      <View
-        style={[styles.climberTorso, { backgroundColor: activeJacket }]}
-      >
-        <View style={styles.climberHarness} />
-      </View>
-      <View style={styles.climberLegsRow}>
-        <View
-          style={[
-            styles.climberLeg,
-            isHopping && reachLeft && styles.legTucked
-          ]}
-        />
-        <View
-          style={[
-            styles.climberLeg,
-            isHopping && !reachLeft && styles.legTucked
-          ]}
-        />
-      </View>
-    </View>
-  );
-};
 
 export const GameScreen: React.FC<GameScreenProps> = ({
   mode = 'ONLINE',
+  botDifficulty = 'MEDIUM',
   roomState,
   playerId,
   livePlayers,
@@ -428,7 +350,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   onOfflineFinish,
   onLeaveRoom
 }) => {
+  const { t } = useLanguage();
   const isOffline = mode === 'OFFLINE';
+
+  const activeSettings = useMemo(
+    () => sanitizeMatchSettings(roomState.settings, DEFAULT_MATCH_SETTINGS),
+    [roomState.settings]
+  );
+
   const windowDims = Dimensions.get('window');
   const [viewport, setViewport] = useState<{ width: number; height: number }>({
     width: Math.max(300, windowDims.width - 24),
@@ -441,13 +370,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     () =>
       generateMountainSteps({
         seed: roomState.seed,
-        targetHeight: roomState.targetHeight
+        targetHeight: roomState.targetHeight,
+        settings: activeSettings
       }),
-    [roomState.seed, roomState.targetHeight]
+    [activeSettings, roomState.seed, roomState.targetHeight]
   );
 
   const selfPlayer = roomState.players.find((p) => p.id === playerId);
-  const selfColor = selfPlayer?.color ?? '#3B82F6';
+  const selfColor = selfPlayer?.color ?? '#38BDF8';
   const selfNickname = selfPlayer?.nickname ?? 'Climber';
 
   const gameRef = useRef<ClimbRuntimeState>({
@@ -461,20 +391,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     boulderInvulnTimer: 0,
     status: 'CLIMBING',
     finishTimeMs: null,
-    offlineFinishDelaySec: 0,
+    allFinishedDelaySec: 0.45,
     offlineFinishDispatched: false,
     toast: null,
     animClock: 0,
     finishedEmitted: false
   });
 
-  // Decoupled boulder queue (never canceled when player climbs past trigger step)
   const activeBouldersRef = useRef<ActiveBoulder[]>([]);
   const spawnedBoulderKeysRef = useRef<Set<string>>(new Set());
   const proximityTriggeredStepsRef = useRef<Set<number>>(new Set());
   const boulderSeqRef = useRef<number>(0);
 
-  // Offline AI bots & deterministic bot PRNG
   const offlineBotsRef = useRef<OfflineBotRuntime[]>([]);
   const botPrngRef = useRef(createMulberry32(roomState.seed ^ 0x9e3779b9));
 
@@ -485,6 +413,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const onSendMoveRef = useRef(onSendMove);
   const onOfflineFinishRef = useRef(onOfflineFinish);
   const roomStateRef = useRef(roomState);
+  const tRef = useRef(t);
   const matchStartLocalMsRef = useRef<number>(Date.now());
   const elapsedMsRef = useRef<number>(0);
   const lastEmitMsRef = useRef<number>(0);
@@ -508,8 +437,108 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   }, [roomState]);
 
   useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+
+  useEffect(() => {
     viewportRef.current = viewport;
   }, [viewport]);
+
+  const dispatchOfflineResults = useCallback(
+    (reason: MatchFinishReason) => {
+      const g = gameRef.current;
+      if (g.offlineFinishDispatched) return;
+      g.offlineFinishDispatched = true;
+
+      const baseRoom = roomStateRef.current;
+      const selfReachedTop = g.status === 'FINISHED';
+      const selfHeight = selfReachedTop
+        ? baseRoom.targetHeight
+        : steps[g.stepIndex]!.height;
+      const selfFinishMs = selfReachedTop ? g.finishTimeMs : null;
+
+      const rawEntries: Array<Omit<MatchRankingEntry, 'rank'>> = [
+        {
+          playerId,
+          nickname: selfNickname,
+          color: selfColor,
+          height: selfHeight,
+          score: Math.round(selfHeight * 10),
+          status: selfReachedTop ? 'FINISHED' : 'CLIMBING',
+          finishTimeMs: selfFinishMs
+        },
+        ...offlineBotsRef.current.map((b) => {
+          const botDone = b.status === 'FINISHED';
+          const botH = botDone
+            ? baseRoom.targetHeight
+            : steps[b.stepIndex]!.height;
+          return {
+            playerId: b.id,
+            nickname: b.nickname,
+            color: b.color,
+            height: botH,
+            score: Math.max(b.score, Math.round(botH * 10)),
+            status: botDone ? ('FINISHED' as const) : b.status,
+            finishTimeMs: botDone ? b.finishTimeMs : null
+          };
+        })
+      ];
+
+      rawEntries.sort((a, b) => {
+        if (a.finishTimeMs !== null && b.finishTimeMs !== null) {
+          return a.finishTimeMs - b.finishTimeMs;
+        }
+        if (a.finishTimeMs !== null) return -1;
+        if (b.finishTimeMs !== null) return 1;
+        return b.height - a.height;
+      });
+
+      const rankings: MatchRankingEntry[] = rawEntries.map((entry, idx) => ({
+        ...entry,
+        rank: idx + 1
+      }));
+
+      const nowFinished = Date.now();
+      const totalElapsedMs = Math.max(
+        1,
+        nowFinished - matchStartLocalMsRef.current
+      );
+      const finishedRoom: RoomState = {
+        ...baseRoom,
+        phase: 'FINISHED',
+        status: 'FINISHED',
+        finishedAt: nowFinished,
+        winnerId: rankings[0]?.playerId ?? playerId,
+        players: rankings.map((r) => ({
+          id: r.playerId,
+          nickname: r.nickname,
+          name: r.nickname,
+          isHost: r.playerId === playerId,
+          isReady: true,
+          color: r.color,
+          height: r.height,
+          x: WORLD_WIDTH * 0.5,
+          y: r.height,
+          score: r.score,
+          status: r.status,
+          finishTimeMs: r.finishTimeMs,
+          ping: 0
+        }))
+      };
+
+      onOfflineFinishRef.current?.({
+        roomCode: baseRoom.code,
+        winnerId: finishedRoom.winnerId,
+        seed: baseRoom.seed,
+        targetHeight: baseRoom.targetHeight,
+        durationMs: selfFinishMs ?? totalElapsedMs,
+        reason,
+        rankings,
+        room: finishedRoom
+      });
+    },
+    [playerId, selfColor, selfNickname, steps]
+  );
 
   // Reset match state cleanly on new match / rematch seed
   useEffect(() => {
@@ -525,7 +554,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       boulderInvulnTimer: 0,
       status: 'CLIMBING',
       finishTimeMs: null,
-      offlineFinishDelaySec: 0,
+      allFinishedDelaySec: 0.45,
       offlineFinishDispatched: false,
       toast: null,
       animClock: 0,
@@ -543,7 +572,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     if (isOffline) {
       botPrngRef.current = createMulberry32(roomState.seed ^ 0x9e3779b9);
-      const bots = createInitialOfflineBots(roomState.seed);
+      const bots = createInitialOfflineBots(
+        roomStateRef.current,
+        playerId,
+        botDifficulty
+      );
       offlineBotsRef.current = bots;
 
       const ghostMap = new Map<string, RivalGhost>();
@@ -564,7 +597,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       offlineBotsRef.current = [];
       rivalGhostsRef.current.clear();
     }
-  }, [isOffline, roomState.seed, steps]);
+  }, [botDifficulty, isOffline, playerId, roomState.seed, steps]);
 
   // Sync incoming 20Hz `match:state` rival positions in Online mode
   useEffect(() => {
@@ -576,7 +609,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     for (const p of livePlayers) {
       if (p.id === playerId) continue;
       activeIds.add(p.id);
-      const normX = Math.max(0.2, Math.min(0.8, p.x / WORLD_WIDTH));
+      const normX =
+        p.status === 'FINISHED'
+          ? 0.5
+          : Math.max(0.2, Math.min(0.8, p.x / WORLD_WIDTH));
       const existing = map.get(p.id);
       if (existing) {
         existing.targetXNorm = normX;
@@ -671,22 +707,26 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         isFall: true
       };
       g.toast = {
-        text: '🪨 BOULDER HIT! -30m',
+        text: tRef.current.toastBoulderHit,
         accent: '#FCA5A5',
         ttl: 1.0
       };
 
-      void HapticsService.collision();
+      SoundService.play('boulder_hit');
       queueOrEmitMove(destStep.x, destStep.height, 'STUN', 'STUNNED', true);
     },
     [queueOrEmitMove, steps]
   );
 
-  // Strict 2-Lane Left / Right Tap Handler
   const handleTap = useCallback(
     (side: TapDirection) => {
       const g = gameRef.current;
-      if (g.status === 'FINISHED' || g.lockTimer > 0) {
+      const timeLimitMs = activeSettings.timeLimitSec * 1000;
+      if (
+        g.status === 'FINISHED' ||
+        g.lockTimer > 0 ||
+        elapsedMsRef.current >= timeLimitMs
+      ) {
         return;
       }
 
@@ -697,7 +737,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       const currentStep = steps[g.stepIndex]!;
 
-      // 1. Wrong-side tap -> whiff toward wrong lane & fall back 2 steps (-20m)
+      // 1. Wrong-side tap -> whiff & fall back 2 steps (-20m)
       if (side !== nextStep.requiredTap) {
         const destIndex = Math.max(0, g.stepIndex - 2);
         const destStep = steps[destIndex]!;
@@ -723,25 +763,28 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         g.toast = {
           text:
             destIndex < currentStep.index
-              ? 'MISSED HOLD! -20m'
-              : 'MISSED HOLD!',
+              ? tRef.current.toastMissedFall
+              : tRef.current.toastMissed,
           accent: '#FCD34D',
           ttl: 0.8
         };
 
-        void HapticsService.warning();
+        SoundService.play('slip_fall');
         queueOrEmitMove(destStep.x, destStep.height, 'FALL', 'CLIMBING', false);
         return;
       }
 
       // 2. Correct-side tap -> advance +10m onto `nextStep`
       const prevBiome = currentStep.biome;
+      const reachingSummit = nextStep.height >= roomState.targetHeight;
+      const targetLandingX = reachingSummit ? 0.5 : nextStep.x;
+
       g.stepIndex = nextStep.index;
       g.slipElapsed = 0;
       g.hop = {
         fromX: g.visualX,
         fromHeight: g.visualHeight,
-        toX: nextStep.x,
+        toX: targetLandingX,
         toHeight: nextStep.height,
         elapsed: 0,
         duration: 0.125,
@@ -749,9 +792,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         isFall: false
       };
 
-      if (nextStep.biome !== prevBiome) {
+      if (nextStep.biome !== prevBiome && !reachingSummit) {
         g.toast = {
-          text: `${BIOME_PALETTES[nextStep.biome].name.toUpperCase()} • ${
+          text: `${tRef.current.biomes[nextStep.biome].toUpperCase()} • ${
             nextStep.height
           }m`,
           accent: BIOME_PALETTES[nextStep.biome].pillText,
@@ -762,19 +805,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       const moveAction: PlayerMoveAction =
         side === 'LEFT' ? 'TAP_LEFT' : 'TAP_RIGHT';
 
-      if (nextStep.height >= roomState.targetHeight) {
+      if (reachingSummit) {
         const finishMs = Math.max(1, Date.now() - matchStartLocalMsRef.current);
         g.status = 'FINISHED';
         g.finishTimeMs = finishMs;
-        g.offlineFinishDelaySec = 0.42;
         g.toast = {
-          text: '🚩 SUMMIT CONQUERED!',
+          text: tRef.current.toastSummitConquered,
           accent: '#FEF08A',
-          ttl: 2.2
+          ttl: 1.8
         };
-        void HapticsService.victory();
+        SoundService.play('summit_victory');
         queueOrEmitMove(
-          nextStep.x,
+          0.5,
           roomState.targetHeight,
           moveAction,
           'FINISHED',
@@ -782,7 +824,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         );
       } else {
         g.status = 'CLIMBING';
-        void HapticsService.jump();
+        SoundService.play('climb_step');
         queueOrEmitMove(
           nextStep.x,
           nextStep.height,
@@ -792,7 +834,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         );
       }
     },
-    [queueOrEmitMove, roomState.targetHeight, steps]
+    [activeSettings.timeLimitSec, queueOrEmitMove, roomState.targetHeight, steps]
   );
 
   const handleArenaLayout = useCallback((event: LayoutChangeEvent) => {
@@ -802,12 +844,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   }, []);
 
-  // 60fps Game Loop: Climber, Non-Canceling Boulders, Offline AI Bots & Blizzard
+  // 60fps Game Loop
   useEffect(() => {
     let rafId: number | null = null;
     let lastFrameTime: number | null = null;
+    const timeLimitMs = activeSettings.timeLimitSec * 1000;
+    const bouldersEnabled = activeSettings.enableBoulders;
 
     const commitBoulderInLane = (step: ClimbStep) => {
+      if (!bouldersEnabled) return;
       const laneAlreadyBusy = activeBouldersRef.current.some(
         (b) => b.lane === step.requiredTap
       );
@@ -821,7 +866,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         phase: 'WARNING',
         elapsedSec: 0,
         warningDurationSec: BOULDER_WARNING_SEC,
-        fallDurationSec: (step.activeDurationMs ?? 1080) / 1000,
+        fallDurationSec: (step.activeDurationMs ?? 1100) / 1000,
         screenY: -60,
         spinDeg: 0,
         hitPlayer: false,
@@ -841,6 +886,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       const g = gameRef.current;
       g.animClock = (g.animClock + dt) % 3600;
+
+      // Time-Up Check in Offline Mode
+      if (isOffline && elapsedMs >= timeLimitMs && !g.offlineFinishDispatched) {
+        dispatchOfflineResults('TIME_LIMIT');
+        return;
+      }
 
       // Flush trailing throttled network move (Online mode)
       if (
@@ -874,11 +925,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       // Interpolate local climber hop / fall arc
       const currentStep = steps[g.stepIndex]!;
+      const restX = g.status === 'FINISHED' ? 0.5 : currentStep.x;
+
       if (g.hop) {
         g.hop.elapsed += dt;
-        const t = Math.min(1, g.hop.elapsed / g.hop.duration);
-        const eased = 1 - Math.pow(1 - t, 2);
-        const arc = Math.sin(t * Math.PI) * g.hop.arcMeters;
+        const p = Math.min(1, g.hop.elapsed / g.hop.duration);
+        const eased = 1 - Math.pow(1 - p, 2);
+        const arc = Math.sin(p * Math.PI) * g.hop.arcMeters;
 
         g.visualX = g.hop.fromX + (g.hop.toX - g.hop.fromX) * eased;
         g.visualHeight =
@@ -886,18 +939,19 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           (g.hop.toHeight - g.hop.fromHeight) * eased +
           arc;
 
-        if (t >= 1) {
-          g.visualX = currentStep.x;
+        if (p >= 1) {
+          g.visualX = restX;
           g.visualHeight = currentStep.height;
           g.hop = null;
         }
       } else {
-        g.visualX = currentStep.x;
+        g.visualX = restX;
         g.visualHeight = currentStep.height;
       }
 
-      // Slippery Ice Hold timed grip-slip (~0.75s; hold never breaks or disappears)
+      // Slippery Ice Hold timed grip-slip (~0.75s; finished climbers at summit are immune)
       if (
+        activeSettings.enableIce &&
         currentStep.type === 'SLIPPERY_LEDGE' &&
         g.status !== 'FINISHED' &&
         g.lockTimer <= 0 &&
@@ -922,12 +976,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             isFall: true
           };
           g.toast = {
-            text: '🧊 ICY SLIP! -20m',
+            text: tRef.current.toastIcySlip,
             accent: '#7DD3FC',
             ttl: 0.85
           };
 
-          void HapticsService.warning();
+          SoundService.play('slip_fall');
           queueOrEmitMove(
             destStep.x,
             destStep.height,
@@ -947,90 +1001,90 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       const climberCenterY =
         anchorY - (g.visualHeight - g.cameraHeight) * PIXELS_PER_METER - 22;
 
-      // 1. Spawn new boulders into `activeBouldersRef` when approaching/cycling FALLING_ROCK steps
-      const minScan = Math.max(1, g.stepIndex - 1);
-      const maxScan = Math.min(steps.length - 1, g.stepIndex + 4);
-      for (let idx = minScan; idx <= maxScan; idx++) {
-        const st = steps[idx]!;
-        if (st.type !== 'FALLING_ROCK') continue;
+      // 1 & 2. Decoupled Falling Boulders (completely disabled if enableBoulders === false)
+      if (bouldersEnabled) {
+        const minScan = Math.max(1, g.stepIndex - 1);
+        const maxScan = Math.min(steps.length - 1, g.stepIndex + 4);
+        for (let idx = minScan; idx <= maxScan; idx++) {
+          const st = steps[idx]!;
+          if (st.type !== 'FALLING_ROCK') continue;
 
-        const cycleMs = st.cycleMs ?? 3000;
-        const offsetMs = st.phaseOffsetMs ?? 0;
-        const cycleIdx = Math.floor(Math.max(0, elapsedMs + offsetMs) / cycleMs);
-        const cycleKey = `${st.index}:${cycleIdx}`;
+          const cycleMs = st.cycleMs ?? 6500;
+          const offsetMs = st.phaseOffsetMs ?? 0;
+          const cycleIdx = Math.floor(
+            Math.max(0, elapsedMs + offsetMs) / cycleMs
+          );
+          const cycleKey = `${st.index}:${cycleIdx}`;
 
-        // Immediate proximity trigger on first approach so speed-climbers never skip rockfalls
-        if (
-          !proximityTriggeredStepsRef.current.has(st.index) &&
-          g.stepIndex >= st.index - 2 &&
-          g.stepIndex <= st.index
-        ) {
-          proximityTriggeredStepsRef.current.add(st.index);
-          spawnedBoulderKeysRef.current.add(cycleKey);
-          commitBoulderInLane(st);
-          continue;
+          if (
+            !proximityTriggeredStepsRef.current.has(st.index) &&
+            g.stepIndex >= st.index - 2 &&
+            g.stepIndex <= st.index
+          ) {
+            proximityTriggeredStepsRef.current.add(st.index);
+            spawnedBoulderKeysRef.current.add(cycleKey);
+            commitBoulderInLane(st);
+            continue;
+          }
+
+          const hz = evaluateHazardPhase(st, elapsedMs);
+          if (
+            hz.phase === 'WARNING' &&
+            !spawnedBoulderKeysRef.current.has(cycleKey)
+          ) {
+            spawnedBoulderKeysRef.current.add(cycleKey);
+            commitBoulderInLane(st);
+          }
         }
 
-        const hz = evaluateHazardPhase(st, elapsedMs);
-        if (
-          hz.phase === 'WARNING' &&
-          !spawnedBoulderKeysRef.current.has(cycleKey)
-        ) {
-          spawnedBoulderKeysRef.current.add(cycleKey);
-          commitBoulderInLane(st);
-        }
-      }
+        const remainingBoulders: ActiveBoulder[] = [];
+        for (const b of activeBouldersRef.current) {
+          if (b.phase === 'WARNING') {
+            b.elapsedSec += dt;
+            if (b.elapsedSec >= b.warningDurationSec) {
+              const overflow = b.elapsedSec - b.warningDurationSec;
+              b.phase = 'FALLING';
+              b.elapsedSec = overflow;
+            }
+            remainingBoulders.push(b);
+            continue;
+          }
 
-      // 2. Advance every committed boulder independently to completion (never canceled early!)
-      const remainingBoulders: ActiveBoulder[] = [];
-      for (const b of activeBouldersRef.current) {
-        if (b.phase === 'WARNING') {
           b.elapsedSec += dt;
-          if (b.elapsedSec >= b.warningDurationSec) {
-            const overflow = b.elapsedSec - b.warningDurationSec;
-            b.phase = 'FALLING';
-            b.elapsedSec = overflow;
+          const progress = b.elapsedSec / b.fallDurationSec;
+          b.screenY = -60 + progress * (playH + 130);
+          b.spinDeg = progress * 560;
+
+          if (
+            !b.hitPlayer &&
+            g.status !== 'FINISHED' &&
+            g.boulderInvulnTimer <= 0 &&
+            g.stepIndex > 0 &&
+            !g.hop?.isFall
+          ) {
+            const sameLane = Math.abs(g.visualX - b.laneX) < 0.19;
+            const verticalHit = Math.abs(climberCenterY - b.screenY) < 36;
+            if (sameLane && verticalHit) {
+              b.hitPlayer = true;
+              triggerBoulderHit(g.visualX, g.visualHeight);
+            }
           }
-          remainingBoulders.push(b);
-          continue;
-        }
 
-        // FALLING phase: continuous roll from y = -60px past playfieldHeight + 60px
-        b.elapsedSec += dt;
-        const progress = b.elapsedSec / b.fallDurationSec;
-        b.screenY = -60 + progress * (playH + 130);
-        b.spinDeg = progress * 560;
-
-        // Live screen-space collision check against local climber
-        if (
-          !b.hitPlayer &&
-          g.status !== 'FINISHED' &&
-          g.boulderInvulnTimer <= 0 &&
-          g.stepIndex > 0 &&
-          !g.hop?.isFall
-        ) {
-          const sameLane = Math.abs(g.visualX - b.laneX) < 0.19;
-          const verticalHit = Math.abs(climberCenterY - b.screenY) < 36;
-          if (sameLane && verticalHit) {
-            b.hitPlayer = true;
-            triggerBoulderHit(g.visualX, g.visualHeight);
+          if (b.screenY <= playH + 68) {
+            remainingBoulders.push(b);
           }
         }
-
-        if (b.screenY <= playH + 68) {
-          remainingBoulders.push(b);
-        }
+        activeBouldersRef.current = remainingBoulders;
       }
-      activeBouldersRef.current = remainingBoulders;
 
-      // 3. Simulate 3 local AI Rival Bots in Offline mode
+      // 3. Simulate 3 local AI Rival Bots in Offline mode (continues while player waits at 500m!)
       if (isOffline) {
         const botRng = botPrngRef.current;
 
         for (const bot of offlineBotsRef.current) {
           const botStep = steps[bot.stepIndex]!;
+          const botRestX = bot.status === 'FINISHED' ? 0.5 : botStep.x;
 
-          // Interpolate bot hop arc
           if (bot.hop) {
             bot.hop.elapsed += dt;
             const bt = Math.min(1, bot.hop.elapsed / bot.hop.duration);
@@ -1042,12 +1096,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               (bot.hop.toHeight - bot.hop.fromHeight) * eased +
               arc;
             if (bt >= 1) {
-              bot.visualX = botStep.x;
+              bot.visualX = botRestX;
               bot.visualHeight = botStep.height;
               bot.hop = null;
             }
           } else {
-            bot.visualX = botStep.x;
+            bot.visualX = botRestX;
             bot.visualHeight = botStep.height;
           }
 
@@ -1059,8 +1113,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             }
 
-            // Check live boulder hit on visible AI bot
-            if (bot.stunTimer <= 0 && bot.stepIndex > 0 && !bot.hop?.isFall) {
+            if (
+              bouldersEnabled &&
+              bot.stunTimer <= 0 &&
+              bot.stepIndex > 0 &&
+              !bot.hop?.isFall
+            ) {
               const botScreenY =
                 anchorY -
                 (bot.visualHeight - g.cameraHeight) * PIXELS_PER_METER -
@@ -1097,8 +1155,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             }
 
-            // Bot slippery hold check
             if (
+              activeSettings.enableIce &&
               botStep.type === 'SLIPPERY_LEDGE' &&
               bot.stunTimer <= 0 &&
               bot.hop === null
@@ -1123,33 +1181,30 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             }
 
-            // Bot step decision cadence
             if (bot.stunTimer <= 0) {
               bot.decisionTimer -= dt;
               if (bot.decisionTimer <= 0) {
                 const nextBotStep = steps[bot.stepIndex + 1];
                 if (nextBotStep) {
-                  // Check if next lane currently has a warning/falling boulder
                   const activeLaneDanger =
-                    activeBouldersRef.current.some(
+                    bouldersEnabled &&
+                    (activeBouldersRef.current.some(
                       (b) => b.lane === nextBotStep.requiredTap
                     ) ||
-                    (nextBotStep.type === 'FALLING_ROCK' &&
-                      evaluateHazardPhase(nextBotStep, elapsedMs).phase !==
-                        'SAFE');
+                      (nextBotStep.type === 'FALLING_ROCK' &&
+                        evaluateHazardPhase(nextBotStep, elapsedMs).phase !==
+                          'SAFE'));
 
                   if (
                     activeLaneDanger &&
                     botStep.type !== 'SLIPPERY_LEDGE' &&
                     botRng.next() < bot.cautionProb
                   ) {
-                    // Cautiously pause on safe opposite-lane hold
                     bot.decisionTimer = botRng.nextFloat(0.2, 0.34);
                   } else if (
                     bot.stepIndex > 2 &&
                     botRng.next() < bot.mistakeProb
                   ) {
-                    // Occasional wrong-lane slip (-20m) so bots feel human
                     const slipIdx = Math.max(0, bot.stepIndex - 2);
                     const slipDest = steps[slipIdx]!;
                     bot.stepIndex = slipIdx;
@@ -1166,7 +1221,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                       isFall: true
                     };
                   } else {
-                    // Advance +10m onto next hold
+                    const botReachingSummit =
+                      nextBotStep.height >= roomState.targetHeight;
+                    const botDestX = botReachingSummit ? 0.5 : nextBotStep.x;
+
                     bot.stepIndex = nextBotStep.index;
                     bot.slipElapsed = 0;
                     bot.score = Math.max(
@@ -1176,7 +1234,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     bot.hop = {
                       fromX: bot.visualX,
                       fromHeight: bot.visualHeight,
-                      toX: nextBotStep.x,
+                      toX: botDestX,
                       toHeight: nextBotStep.height,
                       elapsed: 0,
                       duration: 0.13,
@@ -1184,14 +1242,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                       isFall: false
                     };
 
-                    if (nextBotStep.height >= roomState.targetHeight) {
+                    if (botReachingSummit) {
                       bot.status = 'FINISHED';
                       bot.finishTimeMs = Math.max(1, Math.round(elapsedMs));
                     } else if (nextBotStep.type === 'SLIPPERY_LEDGE') {
-                      // Usually hop off ice quickly, occasionally hesitate & risk slipping
                       bot.decisionTimer =
-                        botRng.next() < 0.1
-                          ? 0.82
+                        botRng.next() < 0.08
+                          ? 0.8
                           : botRng.nextFloat(0.18, 0.34);
                     } else {
                       bot.decisionTimer = botRng.nextFloat(
@@ -1205,7 +1262,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             }
           }
 
-          // Sync bot into ghost map for unified rendering
           const ghost = rivalGhostsRef.current.get(bot.id);
           if (ghost) {
             ghost.xNorm = bot.visualX;
@@ -1216,96 +1272,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           }
         }
 
-        // Conclude Offline race smoothly once the local player reaches 500m
-        if (g.status === 'FINISHED' && !g.offlineFinishDispatched) {
-          g.offlineFinishDelaySec -= dt;
-          if (g.offlineFinishDelaySec <= 0) {
-            g.offlineFinishDispatched = true;
-
-            const selfFinishMs =
-              g.finishTimeMs ?? Math.max(1, Math.round(elapsedMs));
-            const rawEntries: Array<Omit<MatchRankingEntry, 'rank'>> = [
-              {
-                playerId,
-                nickname: selfNickname,
-                color: selfColor,
-                height: roomState.targetHeight,
-                score: roomState.targetHeight * 10,
-                status: 'FINISHED',
-                finishTimeMs: selfFinishMs
-              },
-              ...offlineBotsRef.current.map((b) => {
-                const botH =
-                  b.status === 'FINISHED'
-                    ? roomState.targetHeight
-                    : steps[b.stepIndex]!.height;
-                return {
-                  playerId: b.id,
-                  nickname: b.nickname,
-                  color: b.color,
-                  height: botH,
-                  score: Math.max(b.score, Math.round(botH * 10)),
-                  status: b.status,
-                  finishTimeMs: b.finishTimeMs
-                };
-              })
-            ];
-
-            rawEntries.sort((a, b) => {
-              if (a.finishTimeMs !== null && b.finishTimeMs !== null) {
-                return a.finishTimeMs - b.finishTimeMs;
-              }
-              if (a.finishTimeMs !== null) return -1;
-              if (b.finishTimeMs !== null) return 1;
-              return b.height - a.height;
-            });
-
-            const rankings: MatchRankingEntry[] = rawEntries.map(
-              (entry, idx) => ({
-                ...entry,
-                rank: idx + 1
-              })
-            );
-
-            const nowFinished = Date.now();
-            const baseRoom = roomStateRef.current;
-            const finishedRoom: RoomState = {
-              ...baseRoom,
-              phase: 'FINISHED',
-              status: 'FINISHED',
-              finishedAt: nowFinished,
-              winnerId: rankings[0]?.playerId ?? playerId,
-              players: rankings.map((r) => ({
-                id: r.playerId,
-                nickname: r.nickname,
-                name: r.nickname,
-                isHost: r.playerId === playerId,
-                isReady: true,
-                color: r.color,
-                height: r.height,
-                x: WORLD_WIDTH * 0.5,
-                y: r.height,
-                score: r.score,
-                status: r.status,
-                finishTimeMs: r.finishTimeMs,
-                ping: 0
-              }))
-            };
-
-            onOfflineFinishRef.current?.({
-              roomCode: baseRoom.code,
-              winnerId: finishedRoom.winnerId,
-              seed: baseRoom.seed,
-              targetHeight: baseRoom.targetHeight,
-              durationMs: selfFinishMs,
-              reason: 'TARGET_REACHED',
-              rankings,
-              room: finishedRoom
-            });
+        // Wait at Summit until ALL 4 climbers (player + 3 AI bots) finish (or timer hits 0)
+        const allBotsFinished = offlineBotsRef.current.every(
+          (b) => b.status === 'FINISHED'
+        );
+        if (
+          g.status === 'FINISHED' &&
+          allBotsFinished &&
+          !g.offlineFinishDispatched
+        ) {
+          g.allFinishedDelaySec -= dt;
+          if (g.allFinishedDelaySec <= 0) {
+            dispatchOfflineResults('ALL_FINISHED');
+            return;
           }
         }
       } else {
-        // Online mode: interpolate incoming 20Hz rival ghosts smoothly at 60fps
         const ghostLerp = Math.min(1, dt * 13);
         for (const ghost of rivalGhostsRef.current.values()) {
           ghost.xNorm += (ghost.targetXNorm - ghost.xNorm) * ghostLerp;
@@ -1341,12 +1323,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       }
     };
   }, [
+    activeSettings.enableBoulders,
+    activeSettings.enableIce,
+    activeSettings.timeLimitSec,
+    dispatchOfflineResults,
     isOffline,
-    playerId,
     queueOrEmitMove,
     roomState.targetHeight,
-    selfColor,
-    selfNickname,
     steps,
     triggerBoulderHit
   ]);
@@ -1357,10 +1340,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const nextStep = steps[g.stepIndex + 1] ?? null;
   const elapsedNowMs = elapsedMsRef.current;
 
+  const totalLimitMs = activeSettings.timeLimitSec * 1000;
+  const remainingMs = Math.max(0, totalLimitMs - elapsedNowMs);
+  const remainingSec = Math.ceil(remainingMs / 1000);
+  const isTimeCritical = remainingSec <= 15;
+  const isTimeDanger = remainingSec <= 5;
+  const isTimeUp = remainingMs <= 0;
+
   const activeBiome = getBiomeForHeight(g.visualHeight, roomState.targetHeight);
   const palette = BIOME_PALETTES[activeBiome];
-
-  // Clung snow intensity scales upward from Foothills (0.42) -> Cliffs (0.70) -> Summit (0.95)
   const snowPatchOpacity =
     activeBiome === 'SUMMIT' ? 0.94 : activeBiome === 'CLIFFS' ? 0.7 : 0.44;
 
@@ -1402,6 +1390,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const midParallaxY = Math.min(140, g.cameraHeight * 0.28);
 
   const isSlippingNow =
+    activeSettings.enableIce &&
     logicalStep.type === 'SLIPPERY_LEDGE' &&
     g.lockTimer <= 0 &&
     g.hop === null &&
@@ -1418,13 +1407,33 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   );
 
   const scrollPx = g.cameraHeight * PIXELS_PER_METER;
+  const timerPulseOpacity = isTimeCritical
+    ? 0.72 + Math.sin(g.animClock * 12) * 0.28
+    : 1;
+
+  // Live Summit Finished Count (for Summit Waiting Overlay)
+  const finishedRivalsCount = isOffline
+    ? offlineBotsRef.current.filter((b) => b.status === 'FINISHED').length
+    : livePlayers.filter(
+        (lp) =>
+          lp.id !== playerId &&
+          (lp.status === 'FINISHED' || lp.height >= roomState.targetHeight)
+      ).length;
+  const totalClimberCount = isOffline
+    ? 4
+    : Math.max(1, livePlayers.length || roomState.players.length);
+  const finishedClimberCount =
+    (g.status === 'FINISHED' ? 1 : 0) + finishedRivalsCount;
+
+  const controlsLocked =
+    g.status === 'FINISHED' || g.lockTimer > 0 || isTimeUp;
 
   return (
     <View style={styles.root}>
-      {/* Compact Game HUD */}
+      {/* Compact Game HUD with Countdown Timer */}
       <View style={styles.hudBar}>
         <View style={styles.hudAltitudeBox}>
-          <Text style={styles.hudSmallCap}>ELEVATION</Text>
+          <Text style={styles.hudSmallCap}>{t.hudElevation}</Text>
           <Text style={styles.hudMeters}>
             {logicalStep.height}m
             <Text style={styles.hudGoalMeters}>/{roomState.targetHeight}m</Text>
@@ -1432,7 +1441,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         </View>
 
         <View style={styles.hudCenterBox}>
-          <Text style={styles.hudClock}>{formatTimer(elapsedNowMs)}</Text>
+          <Text style={styles.hudSmallCap}>{t.hudTimeLeft}</Text>
+          <Text
+            style={[
+              styles.hudClock,
+              isTimeCritical && styles.hudClockAmber,
+              isTimeDanger && styles.hudClockRed,
+              { opacity: timerPulseOpacity }
+            ]}
+          >
+            {formatCountdownMMSS(remainingMs)}
+          </Text>
           <View style={styles.hudPillsRow}>
             <View
               style={[styles.biomeBadge, { backgroundColor: palette.pillBg }]}
@@ -1440,11 +1459,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               <Text
                 style={[styles.biomeBadgeText, { color: palette.pillText }]}
               >
-                {palette.name}
+                {t.biomes[activeBiome]}
               </Text>
             </View>
             <Text style={styles.roomBadgeText}>
-              {isOffline ? 'VS AI' : roomState.code}
+              {isOffline ? t.hudVsAi : roomState.code}
             </Text>
           </View>
         </View>
@@ -1456,7 +1475,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           ]}
           onPress={onLeaveRoom}
         >
-          <Text style={styles.exitButtonText}>Exit</Text>
+          <Text style={styles.exitButtonText}>{t.exitBtn}</Text>
         </Pressable>
       </View>
 
@@ -1477,7 +1496,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             <View style={[styles.starDot, { left: '91%', top: '33%' }]} />
           </View>
 
-          {/* Layer 1: Far Parallax Snowy Mountain Silhouettes */}
+          {/* Far Parallax Snowy Mountain Silhouettes */}
           <View
             pointerEvents="none"
             style={[
@@ -1503,7 +1522,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </View>
           </View>
 
-          {/* Layer 2: Mid Parallax Craggy Ridges */}
+          {/* Mid Parallax Craggy Ridges */}
           <View
             pointerEvents="none"
             style={[
@@ -1525,7 +1544,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             />
           </View>
 
-          {/* Layer 3: Rugged Snowy Rock Cliff Wall (0m -> 500m Snowy Peak) */}
+          {/* Rugged Snowy Rock Cliff Wall */}
           <View
             pointerEvents="none"
             style={[
@@ -1539,7 +1558,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               }
             ]}
           >
-            {/* Jagged Left & Right Rock Crag Buttresses */}
             {EDGE_CRAGS.map((cragIdx) => {
               const edgeY =
                 ((scrollPx + cragIdx * 112) % CLIFF_TILE_PERIOD_PX) - 40;
@@ -1548,26 +1566,19 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   <View
                     style={[
                       styles.leftEdgeCrag,
-                      {
-                        top: edgeY,
-                        backgroundColor: palette.rockCragEdge
-                      }
+                      { top: edgeY, backgroundColor: palette.rockCragEdge }
                     ]}
                   />
                   <View
                     style={[
                       styles.rightEdgeCrag,
-                      {
-                        top: edgeY + 52,
-                        backgroundColor: palette.rockCragEdge
-                      }
+                      { top: edgeY + 52, backgroundColor: palette.rockCragEdge }
                     ]}
                   />
                 </React.Fragment>
               );
             })}
 
-            {/* Scrolling Angular Stone Facets, Fissure Cracks & Clung White Snow Patches */}
             {CLIFF_FACETS.map((f) => {
               const topPx =
                 ((scrollPx + f.baseOffsetPx) % CLIFF_TILE_PERIOD_PX) - 50;
@@ -1621,7 +1632,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               );
             })}
 
-            {/* Strict 50/50 Center Vertical Dihedral Lane Seam (kept clear) */}
             <View
               style={[
                 styles.centerRockSeam,
@@ -1629,7 +1639,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               ]}
             />
 
-            {/* Thick Snowy Summit Crest at 500m */}
             {summitScreenY > -80 && <View style={styles.summitSnowCrest} />}
           </View>
 
@@ -1649,7 +1658,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             >
               <View style={styles.flagPole} />
               <View style={styles.goldenFlagBanner}>
-                <Text style={styles.goldenFlagText}>SUMMIT 500m</Text>
+                <Text style={styles.goldenFlagText}>500m</Text>
               </View>
             </View>
           )}
@@ -1690,9 +1699,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     <View
                       style={[
                         styles.landmarkSnowTop,
-                        {
-                          backgroundColor: isSummit ? '#FEF9C3' : '#F8FAFC'
-                        }
+                        { backgroundColor: isSummit ? '#FEF9C3' : '#F8FAFC' }
                       ]}
                     />
                   </View>
@@ -1757,7 +1764,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   )}
                 </View>
 
-                {/* Next-Hold Direction Callout */}
                 {isNextHold && g.status !== 'FINISHED' && (
                   <View
                     pointerEvents="none"
@@ -1780,9 +1786,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             );
           })}
 
-          {/* Translucent Rival Climber Ghosts (Online Rivals or Offline AI Bots) */}
-          {visibleGhosts.map((ghost) => {
-            const gx = normToCliffX(ghost.xNorm) - 19;
+          {/* Translucent Rival Climber Ghosts (Colored in their chosen/assigned colors) */}
+          {visibleGhosts.map((ghost, idx) => {
+            const summitOffset =
+              ghost.status === 'FINISHED' ? (idx - 1) * 22 : 0;
+            const gx = normToCliffX(ghost.xNorm) - 19 + summitOffset;
             const gy = worldToScreenY(ghost.height) - 43;
             return (
               <View
@@ -1835,67 +1843,66 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               reachLeft={
                 g.hop ? g.hop.toX < 0.5 : logicalStep.index % 2 === 1
               }
-              isHopping={g.hop !== null}
+              isHopping={g.hop !== null || g.status === 'FINISHED'}
               isStunned={g.status === 'STUNNED'}
             />
           </View>
 
-          {/* Decoupled, Non-Canceling Full-Screen Lane Boulders */}
-          {activeBouldersRef.current.map((boulder) => {
-            const laneCenterX = normToCliffX(boulder.laneX);
-            const warnPulse = 0.68 + Math.sin(g.animClock * 18) * 0.32;
+          {/* Decoupled, Non-Canceling Full-Screen Lane Boulders (Hidden completely when enableBoulders is OFF) */}
+          {activeSettings.enableBoulders &&
+            activeBouldersRef.current.map((boulder) => {
+              const laneCenterX = normToCliffX(boulder.laneX);
+              const warnPulse = 0.68 + Math.sin(g.animClock * 18) * 0.32;
 
-            return (
-              <React.Fragment key={boulder.id}>
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.boulderLaneTrack,
-                    { left: laneCenterX - 30 }
-                  ]}
-                />
-
-                {/* Pinned Top-Edge Warning Badge */}
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.topEdgeRockWarning,
-                    {
-                      opacity: boulder.phase === 'WARNING' ? warnPulse : 0.92,
-                      transform: [{ translateX: laneCenterX - 52 }]
-                    }
-                  ]}
-                >
-                  <Text style={styles.topEdgeRockWarningText}>
-                    ⚠ ROCKFALL
-                  </Text>
-                </View>
-
-                {/* Rolling Full-Screen Boulder (-60px -> viewportHeight + 60px) */}
-                {boulder.phase === 'FALLING' && (
+              return (
+                <React.Fragment key={boulder.id}>
                   <View
                     pointerEvents="none"
                     style={[
-                      styles.tumblingBoulderWrap,
+                      styles.boulderLaneTrack,
+                      { left: laneCenterX - 30 }
+                    ]}
+                  />
+
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.topEdgeRockWarning,
                       {
-                        transform: [
-                          { translateX: laneCenterX - BOULDER_SIZE_PX / 2 },
-                          { translateY: boulder.screenY - BOULDER_SIZE_PX / 2 }
-                        ]
+                        opacity: boulder.phase === 'WARNING' ? warnPulse : 0.92,
+                        transform: [{ translateX: laneCenterX - 52 }]
                       }
                     ]}
                   >
-                    <BoulderSprite
-                      size={BOULDER_SIZE_PX}
-                      spinDeg={`${Math.round(boulder.spinDeg)}deg`}
-                    />
+                    <Text style={styles.topEdgeRockWarningText}>
+                      {t.rockfallWarning}
+                    </Text>
                   </View>
-                )}
-              </React.Fragment>
-            );
-          })}
 
-          {/* Summit Ambient Snow & Cosmetic Full-Screen Left-to-Right Blizzard Whiteout (350-500m) */}
+                  {boulder.phase === 'FALLING' && (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.tumblingBoulderWrap,
+                        {
+                          transform: [
+                            { translateX: laneCenterX - BOULDER_SIZE_PX / 2 },
+                            { translateY: boulder.screenY - BOULDER_SIZE_PX / 2 }
+                          ]
+                        }
+                      ]}
+                    >
+                      <BoulderSprite
+                        size={BOULDER_SIZE_PX}
+                        spinDeg={`${Math.round(boulder.spinDeg)}deg`}
+                      />
+                    </View>
+                  )}
+                </React.Fragment>
+              );
+            })}
+
+          {/* Summit Ambient Snow & Cosmetic Blizzard Whiteout (350-500m) */}
           {(activeBiome === 'SUMMIT' || blizzard.intensity > 0.02) && (
             <View pointerEvents="none" style={styles.blizzardOverlayLayer}>
               {blizzard.intensity > 0.02 && (
@@ -1930,10 +1937,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 );
               })}
 
-              {blizzard.phase === 'ACTIVE' && (
+              {blizzard.phase === 'ACTIVE' && g.status !== 'FINISHED' && (
                 <View style={styles.blizzardTopPill}>
                   <Text style={styles.blizzardTopPillText}>
-                    ❄ SUMMIT WHITEOUT ▶▶
+                    {t.summitWhiteout}
                   </Text>
                 </View>
               )}
@@ -1941,7 +1948,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           )}
 
           {/* Non-Blocking Top Floating Toast */}
-          {g.toast && (
+          {g.toast && g.status !== 'FINISHED' && (
             <View pointerEvents="none" style={styles.toastWrap}>
               <View style={styles.toastPill}>
                 <Text style={[styles.toastText, { color: g.toast.accent }]}>
@@ -1950,9 +1957,50 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </View>
             </View>
           )}
+
+          {/* Summit Waiting Overlay (Shown when local climber reaches 500m while others still climb) */}
+          {g.status === 'FINISHED' && (
+            <View style={styles.summitWaitOverlay}>
+              <View style={styles.summitWaitCard}>
+                <Text style={styles.summitWaitHeadline}>
+                  {t.summitWaitTitle}
+                </Text>
+                <Text style={styles.summitWaitLockedTime}>
+                  {t.summitWaitTimeLabel}:{' '}
+                  <Text style={styles.summitWaitTimeMono}>
+                    {((g.finishTimeMs ?? 0) / 1000).toFixed(2)}s
+                  </Text>
+                </Text>
+                <View style={styles.summitWaitCountPill}>
+                  <Text style={styles.summitWaitCountText}>
+                    {t.summitWaitProgress(
+                      finishedClimberCount,
+                      totalClimberCount
+                    )}
+                  </Text>
+                </View>
+                <Text style={styles.summitWaitSubText}>{t.summitWaitSub}</Text>
+
+                {isOffline && (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.skipWaitBtn,
+                      pressed && styles.skipWaitBtnPressed
+                    ]}
+                    onPress={() => {
+                      SoundService.play('ui_tap');
+                      dispatchOfflineResults('TARGET_REACHED');
+                    }}
+                  >
+                    <Text style={styles.skipWaitBtnText}>{t.skipWaitBtn}</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          )}
         </View>
 
-        {/* Right-Side Vertical Altitude Progress Rail (Shows Online Rivals or Offline AI Bots) */}
+        {/* Right-Side Vertical Altitude Progress Rail */}
         <View style={styles.altitudeRail}>
           <Text style={styles.railFlag}>🚩</Text>
           <View style={styles.railBar}>
@@ -1989,29 +2037,35 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       {/* Pure 2-Button 50/50 Left & Right Tap Controls */}
       <View style={styles.controlsDeck}>
         <Pressable
+          disabled={controlsLocked}
           style={({ pressed }) => [
             styles.laneTapBtn,
-            nextStep?.requiredTap === 'LEFT' && styles.laneTapBtnHighlighted,
-            pressed && styles.laneTapBtnPressed,
-            g.lockTimer > 0 && styles.laneTapBtnLocked
+            nextStep?.requiredTap === 'LEFT' &&
+              !controlsLocked &&
+              styles.laneTapBtnHighlighted,
+            pressed && !controlsLocked && styles.laneTapBtnPressed,
+            controlsLocked && styles.laneTapBtnLocked
           ]}
           onPressIn={() => handleTap('LEFT')}
         >
-          <Text style={styles.laneTapTitle}>◀ LEFT</Text>
-          <Text style={styles.laneTapHint}>LEFT LANE</Text>
+          <Text style={styles.laneTapTitle}>{t.leftBtn}</Text>
+          <Text style={styles.laneTapHint}>{t.leftLaneHint}</Text>
         </Pressable>
 
         <Pressable
+          disabled={controlsLocked}
           style={({ pressed }) => [
             styles.laneTapBtn,
-            nextStep?.requiredTap === 'RIGHT' && styles.laneTapBtnHighlighted,
-            pressed && styles.laneTapBtnPressed,
-            g.lockTimer > 0 && styles.laneTapBtnLocked
+            nextStep?.requiredTap === 'RIGHT' &&
+              !controlsLocked &&
+              styles.laneTapBtnHighlighted,
+            pressed && !controlsLocked && styles.laneTapBtnPressed,
+            controlsLocked && styles.laneTapBtnLocked
           ]}
           onPressIn={() => handleTap('RIGHT')}
         >
-          <Text style={styles.laneTapTitle}>RIGHT ▶</Text>
-          <Text style={styles.laneTapHint}>RIGHT LANE</Text>
+          <Text style={styles.laneTapTitle}>{t.rightBtn}</Text>
+          <Text style={styles.laneTapHint}>{t.rightLaneHint}</Text>
         </Pressable>
       </View>
     </View>
@@ -2033,7 +2087,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#131E33',
     borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#283959'
@@ -2045,7 +2099,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 9,
     fontWeight: '800',
-    letterSpacing: 0.9
+    letterSpacing: 0.8
   },
   hudMeters: {
     color: '#F8FAFC',
@@ -2064,15 +2118,21 @@ const styles = StyleSheet.create({
   },
   hudClock: {
     color: '#38BDF8',
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '900',
     fontFamily: 'monospace'
+  },
+  hudClockAmber: {
+    color: '#FBBF24'
+  },
+  hudClockRed: {
+    color: '#F87171'
   },
   hudPillsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 3
+    marginTop: 2
   },
   biomeBadge: {
     paddingHorizontal: 8,
@@ -2325,120 +2385,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900'
   },
-  climberRoot: {
-    width: 38,
-    height: 44,
-    alignItems: 'center',
-    position: 'relative'
-  },
-  climberGhostRoot: {
-    opacity: 0.54
-  },
-  climberPack: {
-    position: 'absolute',
-    top: 15,
-    width: 11,
-    height: 17,
-    borderRadius: 4,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#64748B'
-  },
-  packLeft: {
-    left: 2
-  },
-  packRight: {
-    right: 2
-  },
-  climberHead: {
-    width: 18,
-    height: 15,
-    borderRadius: 8,
-    backgroundColor: '#FDE68A',
-    alignItems: 'center',
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: '#0F172A',
-    zIndex: 3
-  },
-  climberHelmet: {
-    width: '100%',
-    height: 6
-  },
-  climberGoggles: {
-    marginTop: 1,
-    width: 13,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#0F172A',
-    justifyContent: 'center',
-    paddingLeft: 2
-  },
-  goggleGlint: {
-    width: 4,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: '#7DD3FC'
-  },
-  climberTorso: {
-    width: 20,
-    height: 17,
-    borderRadius: 6,
-    marginTop: -1,
-    borderWidth: 1.5,
-    borderColor: '#0F172A',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2
-  },
-  climberHarness: {
-    width: 4,
-    height: '100%',
-    backgroundColor: 'rgba(248, 250, 252, 0.65)'
-  },
-  climberArm: {
-    position: 'absolute',
-    top: 16,
-    width: 7,
-    height: 14,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#0F172A',
-    zIndex: 4
-  },
-  armLeft: {
-    left: 4,
-    transform: [{ rotate: '18deg' }]
-  },
-  armRight: {
-    right: 4,
-    transform: [{ rotate: '-18deg' }]
-  },
-  armRaisedLeft: {
-    top: 6,
-    transform: [{ rotate: '-28deg' }]
-  },
-  armRaisedRight: {
-    top: 6,
-    transform: [{ rotate: '28deg' }]
-  },
-  climberLegsRow: {
-    flexDirection: 'row',
-    gap: 4,
-    marginTop: -2,
-    zIndex: 1
-  },
-  climberLeg: {
-    width: 7,
-    height: 12,
-    borderRadius: 3.5,
-    backgroundColor: '#1E293B',
-    borderBottomWidth: 4,
-    borderBottomColor: '#78350F'
-  },
-  legTucked: {
-    height: 8
-  },
   localClimberPos: {
     position: 'absolute',
     left: 0,
@@ -2487,7 +2433,7 @@ const styles = StyleSheet.create({
     color: '#FEF08A',
     fontSize: 10,
     fontWeight: '900',
-    letterSpacing: 0.6
+    letterSpacing: 0.5
   },
   tumblingBoulderWrap: {
     position: 'absolute',
@@ -2549,6 +2495,79 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.6
+  },
+  summitWaitOverlay: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
+    right: 14,
+    alignItems: 'center'
+  },
+  summitWaitCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: 'rgba(11, 20, 38, 0.93)',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FBBF24'
+  },
+  summitWaitHeadline: {
+    color: '#FEF08A',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 4
+  },
+  summitWaitLockedTime: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  summitWaitTimeMono: {
+    color: '#4ADE80',
+    fontFamily: 'monospace',
+    fontWeight: '900',
+    fontSize: 15
+  },
+  summitWaitCountPill: {
+    marginTop: 8,
+    backgroundColor: '#172E54',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#38BDF8'
+  },
+  summitWaitCountText: {
+    color: '#E0F2FE',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  summitWaitSubText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'center'
+  },
+  skipWaitBtn: {
+    marginTop: 10,
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderBottomWidth: 3,
+    borderBottomColor: '#075985'
+  },
+  skipWaitBtnPressed: {
+    transform: [{ translateY: 1 }]
+  },
+  skipWaitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900'
   },
   altitudeRail: {
     width: 26,
@@ -2632,7 +2651,7 @@ const styles = StyleSheet.create({
     transform: [{ translateY: 2 }]
   },
   laneTapBtnLocked: {
-    opacity: 0.48
+    opacity: 0.42
   },
   laneTapTitle: {
     color: '#FFFFFF',

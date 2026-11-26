@@ -5,8 +5,10 @@ import {
   MatchRankingEntry,
   RoomState
 } from '@climb/shared';
+import { ClimberAvatar } from '../components/MountainArtwork';
 import { saveLocalRecord } from '../db/scoreService';
-import { HapticsService } from '../haptics/hapticsService';
+import { useLanguage } from '../i18n/LanguageContext';
+import { SoundService } from '../services/soundService';
 
 export interface ResultsScreenProps {
   isOffline?: boolean;
@@ -42,6 +44,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   onRematch,
   onLeaveRoom
 }) => {
+  const { t } = useLanguage();
   const savedMatchKeyRef = useRef<string | null>(null);
   const [savedToSqlite, setSavedToSqlite] = useState<boolean>(false);
 
@@ -126,6 +129,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
   const winner = rankings[0];
   const isSelfWinner = winner?.playerId === playerId;
+  const isTimeLimitNoFinisher =
+    matchResult?.reason === 'TIME_LIMIT' && winner?.finishTimeMs === null;
 
   return (
     <View style={styles.card}>
@@ -134,32 +139,37 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         <View style={styles.bannerPeakBg} />
         <Text style={styles.kicker}>
           {isOffline
-            ? 'OFFLINE RACE • VS AI CLIMBERS'
-            : `ONLINE STANDINGS • ROOM ${roomState.code}`}
+            ? t.resultsOfflineKicker
+            : t.resultsOnlineKicker(roomState.code)}
         </Text>
         <Text style={styles.headline}>
-          {isSelfWinner
-            ? '🏆 SUMMIT CHAMPION!'
+          {isTimeLimitNoFinisher
+            ? t.resultsTimeUpBanner
+            : isSelfWinner
+            ? t.resultsSelfChampion
             : winner
-            ? `🏆 ${winner.nickname} Reached the Peak!`
-            : 'Ascent Complete'}
+            ? t.resultsOtherChampion(winner.nickname)
+            : t.resultsComplete}
         </Text>
         {savedToSqlite && (
           <View style={styles.metaBadgeRow}>
-            <Text style={styles.savedPill}>✓ Personal Record Saved</Text>
+            <Text style={styles.savedPill}>{t.resultsRecordSaved}</Text>
           </View>
         )}
       </View>
 
-      {/* Ranked Podium (1st - 4th) */}
+      {/* Ranked Podium (1st - 4th) with Actual Elapsed Climb Time & Colored Climber Avatar */}
       <View style={styles.podiumList}>
         {rankings.map((entry) => {
           const isSelf = entry.playerId === playerId;
           const finished = entry.finishTimeMs !== null;
+          // Always display actual elapsed climb time (finishTimeMs), never remaining countdown time
           const resultPrimary = finished
             ? `${(entry.finishTimeMs! / 1000).toFixed(2)}s`
             : `${Math.round(entry.height)}m`;
-          const resultCaption = finished ? 'SUMMIT TIME' : 'ALTITUDE';
+          const resultCaption = finished
+            ? t.climbTimeCaption
+            : t.maxAltitudeCaption;
 
           return (
             <View
@@ -184,16 +194,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </Text>
               </View>
 
-              <View
-                style={[styles.helmetDot, { backgroundColor: entry.color }]}
-              />
+              <View style={styles.avatarCell}>
+                <ClimberAvatar jacketColor={entry.color} scale={0.72} />
+              </View>
 
               <View style={styles.playerCol}>
                 <View style={styles.playerNameRow}>
                   <Text style={styles.playerName} numberOfLines={1}>
                     {entry.nickname}
                   </Text>
-                  {isSelf && <Text style={styles.youBadge}>YOU</Text>}
+                  {isSelf && <Text style={styles.youBadge}>{t.youBadge}</Text>}
                 </View>
                 <Text style={styles.playerStats}>
                   {Math.max(entry.score, Math.round(entry.height * 10))} pts •{' '}
@@ -224,12 +234,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             pressed && styles.rematchBtnPressed
           ]}
           onPress={() => {
-            void HapticsService.selection();
+            SoundService.play('ui_tap');
             onRematch();
           }}
         >
           <Text style={styles.rematchText}>
-            {isOffline ? '▲ Play Again' : '▲ Play Again (Rematch)'}
+            {isOffline ? t.playAgainBtn : t.rematchBtn}
           </Text>
         </Pressable>
 
@@ -239,11 +249,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             pressed && styles.leaveBtnPressed
           ]}
           onPress={() => {
-            void HapticsService.selection();
+            SoundService.play('ui_tap');
             onLeaveRoom();
           }}
         >
-          <Text style={styles.leaveText}>Back to Home</Text>
+          <Text style={styles.leaveText}>{t.backToHomeBtn}</Text>
         </Pressable>
       </View>
     </View>
@@ -314,7 +324,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0B1424',
-    padding: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#1B2B44'
@@ -324,13 +335,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F1F38'
   },
   rankBadge: {
-    minWidth: 44,
+    minWidth: 42,
     height: 32,
     borderRadius: 8,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 8,
     paddingHorizontal: 6
   },
   rankGold: {
@@ -350,13 +361,12 @@ const styles = StyleSheet.create({
   rankDarkText: {
     color: '#0F172A'
   },
-  helmetDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    marginRight: 10,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.3)'
+  avatarCell: {
+    width: 32,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8
   },
   playerCol: {
     flex: 1,

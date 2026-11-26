@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LocalRecord } from '@climb/shared';
 import { getBestLocalRecords } from '../db/scoreService';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface OfflineRecordsViewProps {
   playerId: string;
@@ -10,6 +11,7 @@ interface OfflineRecordsViewProps {
 export const OfflineRecordsView: React.FC<OfflineRecordsViewProps> = ({
   playerId
 }) => {
+  const { t } = useLanguage();
   const [records, setRecords] = useState<LocalRecord[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -43,11 +45,9 @@ export const OfflineRecordsView: React.FC<OfflineRecordsViewProps> = ({
           <Text style={styles.emptyPeakIcon}>🏆</Text>
         </View>
         <Text style={styles.emptyText}>
-          {loading ? 'Loading summit records...' : 'No ascents recorded yet'}
+          {loading ? t.recordsLoading : t.recordsEmptyTitle}
         </Text>
-        <Text style={styles.emptySub}>
-          Complete an Online or Offline race to log your best summit climbs!
-        </Text>
+        <Text style={styles.emptySub}>{t.recordsEmptySub}</Text>
       </View>
     );
   }
@@ -84,14 +84,18 @@ export const OfflineRecordsView: React.FC<OfflineRecordsViewProps> = ({
                 <Text style={styles.scoreText}>{rec.score} pts</Text>
               </View>
               <Text style={styles.recordMeta}>
-                Time: {durationSec}
-                {rec.height >= 500 ? ' • Summit Conquered' : ' • Partial Ascent'}
+                {t.recordsTimePrefix}: {durationSec} •{' '}
+                {rec.height >= 500
+                  ? t.recordsSummitConquered
+                  : t.recordsPartialAscent}
               </Text>
             </View>
 
             <View style={styles.altitudeTag}>
               <Text style={styles.altitudeTagText}>
-                {rec.height >= 500 ? '🏆 PEAK' : `${Math.round(rec.height)}m`}
+                {rec.height >= 500
+                  ? t.recordsPeakBadge
+                  : `${Math.round(rec.height)}m`}
               </Text>
             </View>
           </View>

@@ -7,6 +7,92 @@ export const SNOWY_ROCK_HOLD_HEIGHT = 38;
 export const SNOWY_ICE_HOLD_WIDTH = 82;
 export const SNOWY_ICE_HOLD_HEIGHT = 42;
 
+export interface ClimberAvatarProps {
+  jacketColor: string;
+  reachLeft?: boolean;
+  isHopping?: boolean;
+  isStunned?: boolean;
+  isGhost?: boolean;
+  scale?: number;
+}
+
+/**
+ * Stylized layered mountaineer character built from pure React Native Views:
+ * helmet/beanie, ski goggles, backpack, puffer jacket, and animated limbs.
+ */
+export const ClimberAvatar: React.FC<ClimberAvatarProps> = ({
+  jacketColor,
+  reachLeft = false,
+  isHopping = false,
+  isStunned = false,
+  isGhost = false,
+  scale = 1
+}) => {
+  const activeJacket = isStunned ? '#EF4444' : jacketColor;
+  const leftArmUp = reachLeft || isHopping;
+  const rightArmUp = !reachLeft || isHopping;
+
+  return (
+    <View
+      style={[
+        styles.climberRoot,
+        isGhost && styles.climberGhostRoot,
+        scale !== 1 && { transform: [{ scale }] }
+      ]}
+    >
+      <View
+        style={[
+          styles.climberPack,
+          reachLeft ? styles.packRight : styles.packLeft
+        ]}
+      />
+      <View
+        style={[
+          styles.climberArm,
+          styles.armLeft,
+          { backgroundColor: activeJacket },
+          leftArmUp && styles.armRaisedLeft
+        ]}
+      />
+      <View
+        style={[
+          styles.climberArm,
+          styles.armRight,
+          { backgroundColor: activeJacket },
+          rightArmUp && styles.armRaisedRight
+        ]}
+      />
+      <View style={styles.climberHead}>
+        <View
+          style={[styles.climberHelmet, { backgroundColor: activeJacket }]}
+        />
+        <View style={styles.climberGoggles}>
+          <View style={styles.goggleGlint} />
+        </View>
+      </View>
+      <View
+        style={[styles.climberTorso, { backgroundColor: activeJacket }]}
+      >
+        <View style={styles.climberHarness} />
+      </View>
+      <View style={styles.climberLegsRow}>
+        <View
+          style={[
+            styles.climberLeg,
+            isHopping && reachLeft && styles.legTucked
+          ]}
+        />
+        <View
+          style={[
+            styles.climberLeg,
+            isHopping && !reachLeft && styles.legTucked
+          ]}
+        />
+      </View>
+    </View>
+  );
+};
+
 export interface SnowyRockHoldProps {
   width?: number;
   isTarget?: boolean;
@@ -17,7 +103,6 @@ export interface SnowyRockHoldProps {
 
 /**
  * Wide inverted-triangle dark-slate rock crag topped with a crisp white snow cap.
- * Built with pure React Native Views and CSS border triangles (zero native SVG deps).
  */
 export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
   width = SNOWY_ROCK_HOLD_WIDTH,
@@ -32,7 +117,6 @@ export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
 
   return (
     <View style={[styles.holdContainer, { width }]}>
-      {/* Crisp White Snow Cap + Scalloped Overhangs */}
       <View
         style={[
           styles.snowCapWide,
@@ -52,9 +136,7 @@ export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
         <View style={styles.snowDrip} />
       </View>
 
-      {/* Inverted-Triangle Layered Rock Crag */}
       <View style={styles.triangleWrap}>
-        {/* Main Slate Crag */}
         <View
           style={[
             styles.triangleBase,
@@ -66,7 +148,6 @@ export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
             }
           ]}
         />
-        {/* Left Lit Stone Facet */}
         <View
           style={[
             styles.triangleBase,
@@ -80,7 +161,6 @@ export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
             }
           ]}
         />
-        {/* Right Deep Shadow Facet */}
         <View
           style={[
             styles.triangleBase,
@@ -102,7 +182,7 @@ export const SnowyRockHold: React.FC<SnowyRockHoldProps> = ({
 export interface SnowyIceHoldProps {
   width?: number;
   isTarget?: boolean;
-  slipProgress?: number; // [0..1] when local climber is standing on this hold
+  slipProgress?: number;
 }
 
 /**
@@ -121,7 +201,6 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
 
   return (
     <View style={[styles.holdContainer, { width }]}>
-      {/* Snow Cap with Frosty Cyan Rim */}
       <View
         style={[
           styles.snowCapIce,
@@ -133,9 +212,7 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
         ]}
       />
 
-      {/* Narrower Inverted-Triangle Translucent Ice Body */}
       <View style={styles.triangleWrap}>
-        {/* Outer Glacial Cyan Cone */}
         <View
           style={[
             styles.triangleBase,
@@ -148,7 +225,6 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
             }
           ]}
         />
-        {/* Mid Bright Ice Facet */}
         <View
           style={[
             styles.triangleBase,
@@ -162,7 +238,6 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
             }
           ]}
         />
-        {/* Crystalline Specular Glint */}
         <View
           style={[
             styles.triangleBase,
@@ -176,7 +251,6 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
             }
           ]}
         />
-        {/* Side Mini Icicle Glints */}
         <View
           style={[
             styles.triangleBase,
@@ -203,7 +277,6 @@ export const SnowyIceHold: React.FC<SnowyIceHoldProps> = ({
         />
       </View>
 
-      {/* Live 0.75s Slip-Grip Countdown Bar */}
       {clampedSlip > 0 && (
         <View style={[styles.slipBarTrack, { width: width - 8 }]}>
           <View
@@ -226,9 +299,6 @@ export interface BoulderSpriteProps {
   spinDeg?: string;
 }
 
-/**
- * Faceted tumbling mountain boulder built from pure React Native Views.
- */
 export const BoulderSprite: React.FC<BoulderSpriteProps> = ({
   size = 48,
   spinDeg = '0deg'
@@ -269,9 +339,6 @@ export const BoulderSprite: React.FC<BoulderSpriteProps> = ({
   );
 };
 
-/**
- * Miniature rendered preview of Falling Boulder + Top Lane Warning for the Book modal.
- */
 export const FallingBoulderMiniature: React.FC = () => {
   return (
     <View style={styles.hazardMiniBox}>
@@ -283,9 +350,6 @@ export const FallingBoulderMiniature: React.FC = () => {
   );
 };
 
-/**
- * Miniature rendered preview of Summit Blizzard Gust whiteout for the Book modal.
- */
 export const BlizzardGustMiniature: React.FC = () => {
   return (
     <View style={styles.blizzardMiniBox}>
@@ -306,6 +370,120 @@ export const BlizzardGustMiniature: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  climberRoot: {
+    width: 38,
+    height: 44,
+    alignItems: 'center',
+    position: 'relative'
+  },
+  climberGhostRoot: {
+    opacity: 0.54
+  },
+  climberPack: {
+    position: 'absolute',
+    top: 15,
+    width: 11,
+    height: 17,
+    borderRadius: 4,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#64748B'
+  },
+  packLeft: {
+    left: 2
+  },
+  packRight: {
+    right: 2
+  },
+  climberHead: {
+    width: 18,
+    height: 15,
+    borderRadius: 8,
+    backgroundColor: '#FDE68A',
+    alignItems: 'center',
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#0F172A',
+    zIndex: 3
+  },
+  climberHelmet: {
+    width: '100%',
+    height: 6
+  },
+  climberGoggles: {
+    marginTop: 1,
+    width: 13,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    paddingLeft: 2
+  },
+  goggleGlint: {
+    width: 4,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#7DD3FC'
+  },
+  climberTorso: {
+    width: 20,
+    height: 17,
+    borderRadius: 6,
+    marginTop: -1,
+    borderWidth: 1.5,
+    borderColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2
+  },
+  climberHarness: {
+    width: 4,
+    height: '100%',
+    backgroundColor: 'rgba(248, 250, 252, 0.65)'
+  },
+  climberArm: {
+    position: 'absolute',
+    top: 16,
+    width: 7,
+    height: 14,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#0F172A',
+    zIndex: 4
+  },
+  armLeft: {
+    left: 4,
+    transform: [{ rotate: '18deg' }]
+  },
+  armRight: {
+    right: 4,
+    transform: [{ rotate: '-18deg' }]
+  },
+  armRaisedLeft: {
+    top: 6,
+    transform: [{ rotate: '-28deg' }]
+  },
+  armRaisedRight: {
+    top: 6,
+    transform: [{ rotate: '28deg' }]
+  },
+  climberLegsRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginTop: -2,
+    zIndex: 1
+  },
+  climberLeg: {
+    width: 7,
+    height: 12,
+    borderRadius: 3.5,
+    backgroundColor: '#1E293B',
+    borderBottomWidth: 4,
+    borderBottomColor: '#78350F'
+  },
+  legTucked: {
+    height: 8
+  },
   holdContainer: {
     alignItems: 'center'
   },
