@@ -1,11 +1,12 @@
-import React, { useEffect, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   MatchFinishedPayload,
   MatchRankingEntry,
   RoomState
 } from '@climb/shared';
 import { saveLocalRecord } from '../db/scoreService';
+import { HapticsService } from '../haptics/hapticsService';
 
 export interface ResultsScreenProps {
   roomState: RoomState;
@@ -15,6 +16,23 @@ export interface ResultsScreenProps {
   onLeaveRoom: () => void;
 }
 
+// Session-level deduplication set complementing component ref so React 19 StrictMode
+// or transient re-renders never insert duplicate rows into SQLite `local_records`.
+const persistedMatchKeys = new Set<string>();
+
+function getOrdinalLabel(rank: number): string {
+  switch (rank) {
+    case 1:
+      return '1ST';
+    case 2:
+      return '2ND';
+    case 3:
+      return '3RD';
+    default:
+      return `${rank}TH`;
+  }
+}
+
 export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   roomState,
   matchResult,
@@ -22,11 +40,24 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   onRematch,
   onLeaveRoom
 }) => {
-  const savedResultSeedRef = useRef<number | null>(null);
+  const savedMatchKeyRef = useRef<string | null>(null);
+  const [savedToSqlite, setSavedToSqlite] = useState<boolean>(false);
 
-  const rankings: MatchRankingEntry[] =
-    matchResult?.rankings ??
-    roomState.players.map((p, index) => ({
+  const rankings: MatchRankingEntry[] = useMemo(() => {
+    if (matchResult && matchResult.rankings.length > 0) {
+      return matchResult.rankings;
+    }
+
+    const sorted = [...roomState.players].sort((a, b) => {
+      if (a.finishTimeMs !== null && b.finishTimeMs !== null) {
+        return a.finishTimeMs - b.finishTimeMs;
+      }
+      if (a.finishTimeMs !== null) return -1;
+      if (b.finishTimeMs !== null) return 1;
+      return b.height - a.height;
+    });
+
+    return sorted.map((p, index) => ({
       rank: index + 1,
       playerId: p.id,
       nickname: p.nickname,
@@ -36,26 +67,60 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       status: p.status,
       finishTimeMs: p.finishTimeMs
     }));
+  }, [matchResult, roomState.players]);
 
-  // Persist local player's match score into SQLite `local_records` once per match
+  const activeSeed = matchResult?.seed ?? roomState.seed;
+  const finishStamp = roomState.finishedAt ?? matchResult?.durationMs ?? 0;
+  const matchUniqueKey = `${playerId}:${roomState.code}:${activeSeed}:${
+    roomState.startedAt ?? finishStamp
+  }`;
+
+  // Auto-save local player's finished run to SQLite `local_records` strictly once per match
   useEffect(() => {
-    if (!matchResult) return;
-    if (savedResultSeedRef.current === matchResult.seed) return;
+    if (!activeSeed) return;
+    if (
+      savedMatchKeyRef.current === matchUniqueKey ||
+      persistedMatchKeys.has(matchUniqueKey)
+    ) {
+      setSavedToSqlite(true);
+      return;
+    }
 
-    const selfEntry = matchResult.rankings.find((r) => r.playerId === playerId);
+    const selfEntry = rankings.find((r) => r.playerId === playerId);
     if (!selfEntry) return;
 
-    savedResultSeedRef.current = matchResult.seed;
+    savedMatchKeyRef.current = matchUniqueKey;
+    persistedMatchKeys.add(matchUniqueKey);
+
+    const runDurationMs =
+      selfEntry.finishTimeMs ??
+      matchResult?.durationMs ??
+      (roomState.startedAt && roomState.finishedAt
+        ? Math.max(0, roomState.finishedAt - roomState.startedAt)
+        : 0);
+
     void saveLocalRecord({
       playerId,
-      score: selfEntry.score,
+      score: Math.max(selfEntry.score, Math.round(selfEntry.height * 10)),
       height: selfEntry.height,
-      seed: matchResult.seed,
-      durationMs: selfEntry.finishTimeMs ?? matchResult.durationMs
-    }).catch((err) => {
-      console.warn('Failed to persist match record in SQLite:', err);
-    });
-  }, [matchResult, playerId]);
+      seed: activeSeed,
+      durationMs: runDurationMs
+    })
+      .then(() => {
+        setSavedToSqlite(true);
+      })
+      .catch((err) => {
+        console.warn('Failed to persist match record in SQLite:', err);
+      });
+  }, [
+    activeSeed,
+    matchUniqueKey,
+    matchResult,
+    playerId,
+    rankings,
+    roomState.finishedAt,
+    roomState.startedAt
+  ]);
 
   const winner = rankings[0];
   const isSelfWinner = winner?.playerId === playerId;
@@ -63,27 +128,35 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   return (
     <View style={styles.card}>
       <View style={styles.banner}>
-        <Text style={styles.kicker}>MATCH COMPLETE • ROOM {roomState.code}</Text>
+        <Text style={styles.kicker}>
+          FINAL STANDINGS • ROOM {roomState.code}
+        </Text>
         <Text style={styles.headline}>
           {isSelfWinner
-            ? '🏆 VICTORY! YOU REACHED THE SUMMIT!'
+            ? '🏆 SUMMIT CHAMPION!'
             : winner
-            ? `🏆 ${winner.nickname} Wins!`
-            : 'Match Finished'}
+            ? `🏆 ${winner.nickname} Reached the Summit!`
+            : 'Match Complete'}
         </Text>
-        <Text style={styles.subText}>
-          Saved to SQLite local_records • Seed 0x
-          {(matchResult?.seed ?? roomState.seed).toString(16).toUpperCase()}
-        </Text>
+        <View style={styles.metaBadgeRow}>
+          <Text style={styles.seedPill}>
+            Seed 0x{activeSeed.toString(16).toUpperCase()}
+          </Text>
+          {savedToSqlite && (
+            <Text style={styles.savedPill}>✓ Saved to SQLite</Text>
+          )}
+        </View>
       </View>
 
+      {/* Ranked Podium (1st - 4th) */}
       <View style={styles.podiumList}>
         {rankings.map((entry) => {
           const isSelf = entry.playerId === playerId;
-          const timeText =
-            entry.finishTimeMs !== null
-              ? `${(entry.finishTimeMs / 1000).toFixed(2)}s`
-              : `${Math.round(entry.height)}m`;
+          const finished = entry.finishTimeMs !== null;
+          const resultPrimary = finished
+            ? `${(entry.finishTimeMs! / 1000).toFixed(2)}s`
+            : `${Math.round(entry.height)}m`;
+          const resultCaption = finished ? 'FINISH TIME' : 'MAX HEIGHT';
 
           return (
             <View
@@ -93,16 +166,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               <View
                 style={[
                   styles.rankBadge,
-                  entry.rank === 1 && styles.rankFirstBadge
+                  entry.rank === 1 && styles.rankGold,
+                  entry.rank === 2 && styles.rankSilver,
+                  entry.rank === 3 && styles.rankBronze
                 ]}
               >
                 <Text
                   style={[
                     styles.rankNumber,
-                    entry.rank === 1 && styles.rankFirstText
+                    entry.rank <= 3 && styles.rankDarkText
                   ]}
                 >
-                  #{entry.rank}
+                  {getOrdinalLabel(entry.rank)}
                 </Text>
               </View>
 
@@ -111,28 +186,60 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               />
 
               <View style={styles.playerCol}>
-                <Text style={styles.playerName}>
-                  {entry.nickname} {isSelf ? '(You)' : ''}
-                </Text>
+                <View style={styles.playerNameRow}>
+                  <Text style={styles.playerName} numberOfLines={1}>
+                    {entry.nickname}
+                  </Text>
+                  {isSelf && <Text style={styles.youBadge}>YOU</Text>}
+                </View>
                 <Text style={styles.playerStats}>
-                  {entry.score} pts • Peak {Math.round(entry.height)}m
+                  {Math.max(entry.score, Math.round(entry.height * 10))} pts •{' '}
+                  {Math.round(entry.height)}m / {roomState.targetHeight}m
                 </Text>
               </View>
 
-              <Text style={styles.timeValue}>{timeText}</Text>
+              <View style={styles.resultCol}>
+                <Text
+                  style={[
+                    styles.timeValue,
+                    finished && styles.timeValueFinished
+                  ]}
+                >
+                  {resultPrimary}
+                </Text>
+                <Text style={styles.resultCaption}>{resultCaption}</Text>
+              </View>
             </View>
           );
         })}
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.rematchBtn} onPress={onRematch}>
-          <Text style={styles.rematchText}>Play Again (Back to Waiting Room)</Text>
-        </TouchableOpacity>
+        <Pressable
+          style={({ pressed }) => [
+            styles.rematchBtn,
+            pressed && styles.rematchBtnPressed
+          ]}
+          onPress={() => {
+            void HapticsService.selection();
+            onRematch();
+          }}
+        >
+          <Text style={styles.rematchText}>Play Again (Rematch)</Text>
+        </Pressable>
 
-        <TouchableOpacity style={styles.leaveBtn} onPress={onLeaveRoom}>
-          <Text style={styles.leaveText}>Leave Room</Text>
-        </TouchableOpacity>
+        <Pressable
+          style={({ pressed }) => [
+            styles.leaveBtn,
+            pressed && styles.leaveBtnPressed
+          ]}
+          onPress={() => {
+            void HapticsService.selection();
+            onLeaveRoom();
+          }}
+        >
+          <Text style={styles.leaveText}>Back to Lobby</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -161,19 +268,41 @@ const styles = StyleSheet.create({
   },
   headline: {
     color: '#F8FAFC',
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '900',
     textAlign: 'center',
-    marginVertical: 6
+    marginVertical: 8
   },
-  subText: {
+  metaBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2
+  },
+  seedPill: {
+    backgroundColor: '#0F172A',
     color: '#94A3B8',
     fontSize: 11,
-    fontWeight: '600'
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  savedPill: {
+    backgroundColor: '#064E3B',
+    color: '#34D399',
+    fontSize: 11,
+    fontWeight: '800',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6
   },
   podiumList: {
     gap: 10,
-    marginBottom: 20
+    marginBottom: 22
   },
   rankRow: {
     flexDirection: 'row',
@@ -181,30 +310,38 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A',
     padding: 12,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#1E293B'
   },
   rankRowSelf: {
-    borderColor: '#38BDF8'
+    borderColor: '#38BDF8',
+    backgroundColor: '#0F1F38'
   },
   rankBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    minWidth: 44,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10
+    marginRight: 10,
+    paddingHorizontal: 6
   },
-  rankFirstBadge: {
+  rankGold: {
     backgroundColor: '#FACC15'
+  },
+  rankSilver: {
+    backgroundColor: '#CBD5E1'
+  },
+  rankBronze: {
+    backgroundColor: '#FB923C'
   },
   rankNumber: {
     color: '#F8FAFC',
     fontWeight: '900',
-    fontSize: 13
+    fontSize: 12
   },
-  rankFirstText: {
+  rankDarkText: {
     color: '#0F172A'
   },
   colorDot: {
@@ -214,32 +351,64 @@ const styles = StyleSheet.create({
     marginRight: 10
   },
   playerCol: {
-    flex: 1
+    flex: 1,
+    marginRight: 8
+  },
+  playerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
   },
   playerName: {
     color: '#F8FAFC',
     fontSize: 15,
-    fontWeight: '700'
+    fontWeight: '800',
+    flexShrink: 1
+  },
+  youBadge: {
+    backgroundColor: '#0284C7',
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
   },
   playerStats: {
     color: '#64748B',
     fontSize: 11,
-    marginTop: 2
+    marginTop: 2,
+    fontWeight: '600'
+  },
+  resultCol: {
+    alignItems: 'flex-end'
   },
   timeValue: {
-    color: '#38BDF8',
-    fontSize: 14,
-    fontWeight: '800',
+    color: '#CBD5E1',
+    fontSize: 15,
+    fontWeight: '900',
     fontFamily: 'monospace'
+  },
+  timeValueFinished: {
+    color: '#4ADE80'
+  },
+  resultCaption: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '800',
+    marginTop: 2
   },
   actions: {
     gap: 10
   },
   rematchBtn: {
     backgroundColor: '#10B981',
-    paddingVertical: 14,
+    paddingVertical: 15,
     borderRadius: 12,
     alignItems: 'center'
+  },
+  rematchBtnPressed: {
+    backgroundColor: '#059669'
   },
   rematchText: {
     color: '#FFFFFF',
@@ -247,15 +416,18 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   leaveBtn: {
-    paddingVertical: 13,
+    paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EF4444',
     alignItems: 'center'
   },
+  leaveBtnPressed: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)'
+  },
   leaveText: {
     color: '#EF4444',
     fontSize: 14,
-    fontWeight: '700'
+    fontWeight: '800'
   }
 });

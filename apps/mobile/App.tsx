@@ -101,6 +101,31 @@ export default function App(): React.JSX.Element {
     );
   }
 
+  // Dedicated full-viewport container during active gameplay so ScrollView never steals multi-touch controls
+  if (roomState && roomState.phase === 'PLAYING') {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" />
+        {error && (
+          <TouchableOpacity
+            style={styles.playingErrorBanner}
+            onPress={clearError}
+          >
+            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorDismiss}>Dismiss</Text>
+          </TouchableOpacity>
+        )}
+        <GameScreen
+          roomState={roomState}
+          playerId={playerId}
+          livePlayers={livePlayers}
+          onSendMove={sendPlayerMove}
+          onLeaveRoom={leaveRoom}
+        />
+      </SafeAreaView>
+    );
+  }
+
   const isInRoom = roomState !== null;
   const isConnected =
     connectionState === 'CONNECTED' || connectionState === 'IN_ROOM';
@@ -240,16 +265,6 @@ export default function App(): React.JSX.Element {
               onLeaveRoom={leaveRoom}
             />
           )}
-
-        {roomState && roomState.phase === 'PLAYING' && (
-          <GameScreen
-            roomState={roomState}
-            playerId={playerId}
-            livePlayers={livePlayers}
-            onSendMove={sendPlayerMove}
-            onLeaveRoom={leaveRoom}
-          />
-        )}
 
         {roomState && roomState.phase === 'FINISHED' && (
           <ResultsScreen
@@ -431,6 +446,17 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  playingErrorBanner: {
+    backgroundColor: '#7F1D1D',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 12,
+    marginTop: 6,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center'

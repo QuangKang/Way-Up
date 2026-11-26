@@ -20,6 +20,7 @@ import { CONFIG } from '../config';
 interface PlayerMoveTracker {
   lastMoveAt: number;
   lastHeight: number;
+  burstAllowance: number;
 }
 
 export interface CountdownCallbacks {
@@ -57,10 +58,10 @@ export class Room {
       nickname: cleanName,
       name: cleanName,
       isHost: true,
-      isReady: true, // Host starts ready so Solo Test or quick starts work smoothly
+      isReady: true,
       color: GAME_CONSTANTS.PLAYER_COLORS[0],
       height: 0,
-      x: 60,
+      x: GAME_CONSTANTS.WORLD_WIDTH * 0.5,
       y: 0,
       score: 0,
       status: 'IDLE',
@@ -131,7 +132,6 @@ export class Room {
       this.hostId = playerId;
     }
 
-    const slotIndex = this.players.size;
     const newPlayer: Player = {
       id: playerId,
       nickname: cleanName,
@@ -140,7 +140,7 @@ export class Room {
       isReady: isFirstPlayer,
       color: assignedColor,
       height: 0,
-      x: 60 + slotIndex * 90,
+      x: GAME_CONSTANTS.WORLD_WIDTH * 0.5,
       y: 0,
       score: 0,
       status: 'IDLE',
@@ -259,7 +259,6 @@ export class Room {
       this.targetHeight = CONFIG.DEFAULT_TARGET_HEIGHT;
     }
 
-    // Generate fresh 32-bit unsigned integer seed for Mulberry32 PRNG
     this.seed = generateRandomSeed();
     this.phase = 'COUNTDOWN';
     this.countdownRemaining = CONFIG.COUNTDOWN_SECONDS;
@@ -317,11 +316,13 @@ export class Room {
       player.status = 'CLIMBING';
       player.height = 0;
       player.y = 0;
+      player.x = GAME_CONSTANTS.WORLD_WIDTH * 0.5;
       player.score = 0;
       player.finishTimeMs = null;
       this.moveTrackers.set(player.id, {
         lastMoveAt: now,
-        lastHeight: 0
+        lastHeight: 0,
+        burstAllowance: CONFIG.MAX_BURST_HEIGHT_DELTA
       });
     }
 
@@ -343,8 +344,9 @@ export class Room {
 
   /**
    * Server-authoritative validation for incoming `player:move` packets.
-   * Rejects non-finite coordinates, impossible upward teleports per tick,
-   * and clamps out-of-bounds positions.
+   * Uses a rolling burst-allowance bucket calibrated for rapid Left/Right rhythm
+   * tapping (~60-80m/s) and recoverable falls (-20m / -30m), while rejecting
+   * upward teleports and speed-hack bursts.
    */
   public applyPlayerMove(payload: PlayerMovePayload): {
     accepted: boolean;
@@ -380,54 +382,61 @@ export class Room {
       };
     }
 
-    // Clamp horizontal and vertical bounds
     const clampedX = Math.max(
       0,
       Math.min(GAME_CONSTANTS.WORLD_WIDTH, payload.x)
     );
-    const clampedHeight = Math.max(0, Math.min(this.targetHeight, payload.height));
+    const clampedHeight = Math.max(
+      0,
+      Math.min(this.targetHeight, payload.height)
+    );
 
     const now = Date.now();
     const startEpoch = this.startedAt ?? now;
+    const tracker = this.moveTrackers.get(player.id) ?? {
+      lastMoveAt: startEpoch,
+      lastHeight: player.height,
+      burstAllowance: CONFIG.MAX_BURST_HEIGHT_DELTA
+    };
+
+    const elapsedSec = Math.max(0, (now - tracker.lastMoveAt) / 1000);
+    const refilledAllowance = Math.min(
+      CONFIG.MAX_BURST_HEIGHT_DELTA,
+      tracker.burstAllowance + elapsedSec * CONFIG.MAX_HEIGHT_GAIN_PER_SEC
+    );
+
     const heightDelta = clampedHeight - player.height;
 
-    // Reject impossible upward teleports per move packet
-    if (heightDelta > CONFIG.MAX_STEP_HEIGHT_DELTA) {
-      return {
-        accepted: false,
-        reachedTarget: false,
-        allFinished: false,
-        reason: 'UPWARD_TELEPORT_REJECTED'
-      };
-    }
-
-    // Reject cumulative climb rates exceeding physical speed ceiling from match start
-    const elapsedSinceStartSec = Math.max(0.05, (now - startEpoch) / 1000);
-    const maxCumulativeHeight =
-      elapsedSinceStartSec * CONFIG.MAX_HEIGHT_GAIN_PER_SEC +
-      CONFIG.MAX_STEP_HEIGHT_DELTA;
-
-    if (clampedHeight > maxCumulativeHeight) {
-      return {
-        accepted: false,
-        reachedTarget: false,
-        allFinished: false,
-        reason: 'VELOCITY_CEILING_EXCEEDED'
-      };
+    if (heightDelta > 0) {
+      // Reject single-packet upward teleports or sustained speed-hack bursts
+      if (
+        heightDelta > CONFIG.MAX_STEP_HEIGHT_DELTA ||
+        heightDelta > refilledAllowance
+      ) {
+        return {
+          accepted: false,
+          reachedTarget: false,
+          allFinished: false,
+          reason: 'UPWARD_TELEPORT_REJECTED'
+        };
+      }
+      tracker.burstAllowance = refilledAllowance - heightDelta;
+    } else {
+      // Downward falls (-20m wrong tap / crumble, -30m boulder / wind gust) are always valid
+      tracker.burstAllowance = refilledAllowance;
     }
 
     const roundedX = Math.round(clampedX * 10) / 10;
     const roundedHeight = Math.round(clampedHeight * 10) / 10;
 
+    tracker.lastMoveAt = now;
+    tracker.lastHeight = roundedHeight;
+    this.moveTrackers.set(player.id, tracker);
+
     player.x = roundedX;
     player.height = roundedHeight;
     player.y = roundedHeight;
     player.score = Math.max(player.score, Math.round(roundedHeight * 10));
-
-    this.moveTrackers.set(player.id, {
-      lastMoveAt: now,
-      lastHeight: roundedHeight
-    });
 
     if (roundedHeight >= this.targetHeight) {
       player.height = this.targetHeight;
@@ -609,18 +618,16 @@ export class Room {
   }
 
   private resetPlayerPositions(resetReadyForGuests: boolean): void {
-    let slotIndex = 0;
     for (const player of this.players.values()) {
       player.height = 0;
       player.y = 0;
-      player.x = 60 + slotIndex * 90;
+      player.x = GAME_CONSTANTS.WORLD_WIDTH * 0.5;
       player.score = 0;
       player.status = 'IDLE';
       player.finishTimeMs = null;
       if (resetReadyForGuests) {
         player.isReady = player.isHost;
       }
-      slotIndex += 1;
     }
   }
 

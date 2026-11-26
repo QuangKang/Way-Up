@@ -15,6 +15,7 @@ export interface ServerConfig {
   MATCH_TIME_LIMIT_MS: number;
   STATE_BROADCAST_INTERVAL_MS: number;
   MAX_STEP_HEIGHT_DELTA: number;
+  MAX_BURST_HEIGHT_DELTA: number;
   MAX_HEIGHT_GAIN_PER_SEC: number;
 }
 
@@ -33,6 +34,8 @@ export const CONFIG: ServerConfig = {
   COUNTDOWN_DURATION_MS: 3000,
   MATCH_TIME_LIMIT_MS: 120000,
   STATE_BROADCAST_INTERVAL_MS: 50,
+  // Calibrated for fast Left/Right rhythm tapping (~60-80m/s) + Wi-Fi packet jitter
   MAX_STEP_HEIGHT_DELTA: 60,
-  MAX_HEIGHT_GAIN_PER_SEC: 120
+  MAX_BURST_HEIGHT_DELTA: 80,
+  MAX_HEIGHT_GAIN_PER_SEC: 110
 };

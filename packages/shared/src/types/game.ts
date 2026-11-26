@@ -1,5 +1,5 @@
 /**
- * Core game constants and model definitions.
+ * Core game constants and model definitions for Way Up!
  */
 
 export const GAME_CONSTANTS = {
@@ -13,9 +13,14 @@ export const GAME_CONSTANTS = {
   COUNTDOWN_DURATION_MS: 3000,
   DEFAULT_TARGET_HEIGHT: 500,
   DEFAULT_GOAL_HEIGHT: 500,
+  STEP_HEIGHT_METERS: 10,
+  FOOTHILLS_MAX_HEIGHT: 150,
+  CLIFFS_MAX_HEIGHT: 350,
+  CRUMBLE_BREAK_MS: 700,
   MATCH_TIME_LIMIT_MS: 120000,
   MAX_STEP_HEIGHT_DELTA: 60,
-  MAX_HEIGHT_GAIN_PER_SEC: 120,
+  MAX_BURST_HEIGHT_DELTA: 80,
+  MAX_HEIGHT_GAIN_PER_SEC: 110,
   WORLD_WIDTH: 400,
   PLAYER_COLORS: [
     '#EF4444', // Crimson Red
@@ -33,20 +38,25 @@ export type RoomStatus = RoomPhase;
 
 export type PlayerStatus = 'IDLE' | 'CLIMBING' | 'STUNNED' | 'FINISHED';
 
+export type TapDirection = 'LEFT' | 'RIGHT';
+
+export type MountainBiome = 'FOOTHILLS' | 'CLIFFS' | 'SUMMIT';
+
+export type HazardPhase = 'SAFE' | 'WARNING' | 'ACTIVE';
+
 export type PlayerMoveAction =
   | 'IDLE'
   | 'TAP_LEFT'
   | 'TAP_RIGHT'
+  | 'FALL'
   | 'JUMP'
-  | 'SPRING'
   | 'STUN';
 
 export type ObstacleType =
   | 'STATIC_LEDGE'
   | 'CRUMBLING_ROCK'
-  | 'MOVING_SPIKE'
-  | 'GUST_OF_WIND'
-  | 'SPRING_PAD';
+  | 'FALLING_ROCK'
+  | 'GUST_OF_WIND';
 
 export interface MatchConfig {
   seed: number;
@@ -70,19 +80,24 @@ export interface Player {
   ping: number;
 }
 
-export interface Obstacle {
+export interface ClimbStep {
   id: string;
+  index: number;
+  height: number; // index * 10 (0m .. targetHeight)
+  y: number; // Synchronized with height
+  requiredTap: TapDirection;
+  x: number; // Normalized horizontal position in [0.18, 0.82]
   type: ObstacleType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  speed?: number;
-  minX?: number;
-  maxX?: number;
+  biome: MountainBiome;
   breakDelayMs?: number;
-  boostMultiplier?: number;
+  cycleMs?: number;
+  phaseOffsetMs?: number;
+  warningDurationMs?: number;
+  activeDurationMs?: number;
+  windDirection?: TapDirection;
 }
+
+export type Obstacle = ClimbStep;
 
 export interface RoomState {
   code: string;
