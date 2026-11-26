@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Player, RoomState } from '@climb/shared';
 
 export interface WaitingRoomScreenProps {
@@ -35,29 +35,31 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
 
   const getStartButtonLabel = (): string => {
     if (!allReady) {
-      return `Waiting for Ready (${readyCount}/${totalCount})`;
+      return `Waiting for Crew (${readyCount}/${totalCount} Ready)`;
     }
     if (totalCount === 1) {
-      return 'Start Match (Solo Test)';
+      return '▲ Launch Solo Ascent';
     }
-    return `Start Match (${totalCount} Climbers)`;
+    return `▲ Launch Ascent (${totalCount} Climbers)`;
   };
 
   return (
     <View style={styles.wrapper}>
-      {/* Room Code Hero Card */}
+      {/* Room Code Basecamp Banner */}
       <View style={styles.codeBanner}>
-        <Text style={styles.codeLabel}>WAITING ROOM CODE</Text>
+        <View style={styles.peakSilhouetteLeft} />
+        <View style={styles.peakSilhouetteRight} />
+        <Text style={styles.codeLabel}>EXPEDITION ROOM CODE</Text>
         <Text style={styles.codeValue}>{roomState.code}</Text>
         <View style={styles.metaPillRow}>
           <View style={styles.metaPill}>
             <Text style={styles.metaPillText}>
-              {totalCount}/{roomState.maxPlayers} CLIMBERS
+              🧗 {totalCount}/{roomState.maxPlayers} CLIMBERS
             </Text>
           </View>
           <View style={styles.metaPill}>
             <Text style={styles.metaPillText}>
-              SUMMIT: {roomState.targetHeight}m
+              🏔 {roomState.targetHeight}M SUMMIT
             </Text>
           </View>
         </View>
@@ -66,9 +68,9 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       {/* Player Roster Card */}
       <View style={styles.rosterCard}>
         <View style={styles.rosterHeader}>
-          <Text style={styles.rosterTitle}>CLIMBER ROSTER</Text>
+          <Text style={styles.rosterTitle}>CLIMBING CREW</Text>
           <Text style={styles.rosterProgress}>
-            {readyCount}/{totalCount} Ready
+            {readyCount}/{totalCount} Rope-Ready
           </Text>
         </View>
 
@@ -80,21 +82,27 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                 key={player.id}
                 style={[styles.playerSlot, isSelf && styles.playerSlotSelf]}
               >
+                {/* Mini Climber Helmet Swatch */}
                 <View
                   style={[
-                    styles.colorSwatch,
+                    styles.helmetBadge,
                     { backgroundColor: player.color }
                   ]}
-                />
+                >
+                  <View style={styles.helmetGoggles} />
+                </View>
+
                 <View style={styles.playerDetails}>
                   <Text style={styles.playerNickname} numberOfLines={1}>
                     {player.nickname} {isSelf ? '(You)' : ''}
                   </Text>
-                  <Text style={styles.slotCaption}>Lane #{index + 1}</Text>
+                  <Text style={styles.slotCaption}>
+                    Climber #{index + 1} • Rope Team
+                  </Text>
                 </View>
 
                 <View style={styles.badgeGroup}>
-                  {player.isHost && <Text style={styles.hostBadge}>HOST</Text>}
+                  {player.isHost && <Text style={styles.hostBadge}>LEAD</Text>}
                   <Text
                     style={[
                       styles.readyBadge,
@@ -103,7 +111,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
                         : styles.readyBadgeNo
                     ]}
                   >
-                    {player.isReady ? 'READY' : 'NOT READY'}
+                    {player.isReady ? 'READY' : 'PREP'}
                   </Text>
                 </View>
               </View>
@@ -117,64 +125,66 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
             >
               <View style={styles.emptyDot} />
               <Text style={styles.emptySlotText}>
-                Open Slot #{totalCount + slotOffset + 1} — Share code{' '}
+                Open Rope Slot #{totalCount + slotOffset + 1} — Share{' '}
                 {roomState.code}
               </Text>
             </View>
           ))}
         </View>
 
-        {/* Controls */}
+        {/* Tactile Controls */}
         <View style={styles.controlsColumn}>
-          <TouchableOpacity
-            style={[
+          <Pressable
+            style={({ pressed }) => [
               styles.button,
               selfPlayer?.isReady ? styles.readyActiveBtn : styles.readyIdleBtn,
-              isCountingDown && styles.buttonDisabled
+              isCountingDown && styles.buttonDisabled,
+              pressed && !isCountingDown && styles.buttonPressed
             ]}
             disabled={isCountingDown}
             onPress={onToggleReady}
           >
             <Text style={styles.buttonText}>
               {selfPlayer?.isReady
-                ? 'Ready ✓ (Tap to Unready)'
-                : 'Ready Up!'}
+                ? '✓ Gear Checked (Tap to Stand Down)'
+                : 'Check Gear — Ready Up!'}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
 
           {isHost ? (
-            <TouchableOpacity
-              style={[
+            <Pressable
+              style={({ pressed }) => [
                 styles.button,
                 styles.startMatchBtn,
-                !canStart && styles.buttonDisabled
+                !canStart && styles.buttonDisabled,
+                pressed && canStart && styles.buttonPressed
               ]}
               disabled={!canStart}
               onPress={onStartMatch}
             >
               <Text style={styles.buttonText}>{getStartButtonLabel()}</Text>
-            </TouchableOpacity>
+            </Pressable>
           ) : (
             <View style={styles.guestNoticeBox}>
               <Text style={styles.guestNoticeText}>
                 {allReady
-                  ? 'All climbers ready! Waiting for Host to start...'
-                  : 'Tap "Ready Up!" so the Host can start the climb.'}
+                  ? 'All climbers roped in! Waiting for Expedition Lead to launch...'
+                  : 'Tap "Ready Up!" so the Expedition Lead can start the ascent.'}
               </Text>
             </View>
           )}
 
-          <TouchableOpacity
-            style={[
-              styles.button,
+          <Pressable
+            style={({ pressed }) => [
               styles.leaveBtn,
-              isCountingDown && styles.buttonDisabled
+              isCountingDown && styles.buttonDisabled,
+              pressed && !isCountingDown && styles.leaveBtnPressed
             ]}
             disabled={isCountingDown}
             onPress={onLeaveRoom}
           >
-            <Text style={styles.leaveBtnText}>Leave Room</Text>
-          </TouchableOpacity>
+            <Text style={styles.leaveBtnText}>Leave Basecamp</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -182,17 +192,15 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({
       {isCountingDown && (
         <View style={styles.countdownOverlay}>
           <View style={styles.countdownModal}>
-            <Text style={styles.countdownTitle}>GET READY TO CLIMB!</Text>
+            <Text style={styles.countdownTitle}>ROPES LOCKED • CLIMB!</Text>
             <Text style={styles.countdownNumber}>
               {activeCountdown !== null && activeCountdown > 0
                 ? activeCountdown
                 : 'GO!'}
             </Text>
-            <Text style={styles.countdownMeta}>
-              PRNG Seed Locked: 0x{roomState.seed.toString(16).toUpperCase()}
-            </Text>
             <Text style={styles.countdownSub}>
-              Target Summit: {roomState.targetHeight}m
+              Summit Target: {roomState.targetHeight}m • Route #
+              {roomState.seed.toString(16).toUpperCase().slice(0, 6)}
             </Text>
           </View>
         </View>
@@ -206,52 +214,73 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   codeBanner: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
+    backgroundColor: '#13223A',
+    borderRadius: 18,
     paddingVertical: 22,
     paddingHorizontal: 20,
     alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#38BDF8'
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    overflow: 'hidden'
+  },
+  peakSilhouetteLeft: {
+    position: 'absolute',
+    bottom: -36,
+    left: -18,
+    width: 96,
+    height: 96,
+    backgroundColor: '#1B3152',
+    transform: [{ rotate: '45deg' }],
+    opacity: 0.45
+  },
+  peakSilhouetteRight: {
+    position: 'absolute',
+    bottom: -44,
+    right: -14,
+    width: 112,
+    height: 112,
+    backgroundColor: '#1B3152',
+    transform: [{ rotate: '45deg' }],
+    opacity: 0.45
   },
   codeLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 1.5
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#7DD3FC',
+    letterSpacing: 1.6
   },
   codeValue: {
     fontSize: 44,
     fontWeight: '900',
-    color: '#38BDF8',
+    color: '#F8FAFC',
     letterSpacing: 8,
     marginVertical: 6
   },
   metaPillRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     marginTop: 4
   },
   metaPill: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0A1322',
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#294266'
   },
   metaPillText: {
     color: '#CBD5E1',
     fontSize: 11,
-    fontWeight: '700'
+    fontWeight: '800'
   },
   rosterCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
+    backgroundColor: '#132036',
+    borderRadius: 18,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#263B59'
   },
   rosterHeader: {
     flexDirection: 'row',
@@ -260,55 +289,66 @@ const styles = StyleSheet.create({
     marginBottom: 12
   },
   rosterTitle: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '900',
     color: '#94A3B8',
-    letterSpacing: 0.8
+    letterSpacing: 1
   },
   rosterProgress: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#34D399'
   },
   slotList: {
     gap: 10,
-    marginBottom: 20
+    marginBottom: 18
   },
   playerSlot: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B1424',
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1E293B'
+    borderColor: '#1C2E4A'
   },
   playerSlotSelf: {
-    borderColor: '#3B82F6'
+    borderColor: '#38BDF8',
+    backgroundColor: '#0F1F38'
   },
   emptySlot: {
-    backgroundColor: '#0B1324',
+    backgroundColor: '#09111E',
     borderStyle: 'dashed',
-    borderColor: '#334155',
+    borderColor: '#263B59',
     paddingVertical: 14
   },
-  colorSwatch: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginRight: 12
+  helmetBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.3)'
+  },
+  helmetGoggles: {
+    width: 14,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#0F172A'
   },
   emptyDot: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#334155',
+    backgroundColor: '#263B59',
     marginRight: 12
   },
   emptySlotText: {
     color: '#64748B',
     fontSize: 12,
-    fontWeight: '600'
+    fontWeight: '700'
   },
   playerDetails: {
     flex: 1,
@@ -316,13 +356,14 @@ const styles = StyleSheet.create({
   },
   playerNickname: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#F8FAFC'
   },
   slotCaption: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 2
+    marginTop: 2,
+    fontWeight: '600'
   },
   badgeGroup: {
     flexDirection: 'row',
@@ -336,21 +377,21 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 4
+    borderRadius: 5
   },
   readyBadge: {
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 4
+    borderRadius: 5
   },
   readyBadgeYes: {
     backgroundColor: '#065F46',
     color: '#34D399'
   },
   readyBadgeNo: {
-    backgroundColor: '#334155',
+    backgroundColor: '#1E293B',
     color: '#94A3B8'
   },
   controlsColumn: {
@@ -359,50 +400,63 @@ const styles = StyleSheet.create({
   button: {
     paddingVertical: 14,
     paddingHorizontal: 20,
-    borderRadius: 12,
+    borderRadius: 13,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    borderBottomWidth: 4
+  },
+  buttonPressed: {
+    transform: [{ translateY: 2 }],
+    borderBottomWidth: 2
   },
   readyIdleBtn: {
-    backgroundColor: '#2563EB'
+    backgroundColor: '#0284C7',
+    borderBottomColor: '#075985'
   },
   readyActiveBtn: {
-    backgroundColor: '#059669'
+    backgroundColor: '#059669',
+    borderBottomColor: '#065F46'
   },
   startMatchBtn: {
-    backgroundColor: '#EA580C'
+    backgroundColor: '#EA580C',
+    borderBottomColor: '#9A3412'
   },
   leaveBtn: {
-    backgroundColor: 'transparent',
+    paddingVertical: 13,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EF4444',
-    marginTop: 4
+    alignItems: 'center',
+    marginTop: 2
+  },
+  leaveBtnPressed: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)'
   },
   buttonDisabled: {
     opacity: 0.45
   },
   buttonText: {
     color: '#FFFFFF',
-    fontWeight: '800',
+    fontWeight: '900',
     fontSize: 15
   },
   leaveBtnText: {
-    color: '#EF4444',
-    fontWeight: '700',
+    color: '#F87171',
+    fontWeight: '800',
     fontSize: 14
   },
   guestNoticeBox: {
-    backgroundColor: '#0F172A',
-    borderRadius: 10,
+    backgroundColor: '#0B1424',
+    borderRadius: 11,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#263B59'
   },
   guestNoticeText: {
     color: '#94A3B8',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     textAlign: 'center'
   },
   countdownOverlay: {
@@ -411,17 +465,17 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
-    borderRadius: 16,
+    backgroundColor: 'rgba(8, 15, 28, 0.9)',
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24
   },
   countdownModal: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
+    backgroundColor: '#13223A',
+    borderRadius: 22,
     paddingVertical: 32,
-    paddingHorizontal: 28,
+    paddingHorizontal: 26,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#F59E0B',
@@ -429,26 +483,20 @@ const styles = StyleSheet.create({
   },
   countdownTitle: {
     color: '#FBBF24',
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '900',
     letterSpacing: 1.5
   },
   countdownNumber: {
     color: '#FFFFFF',
-    fontSize: 76,
+    fontSize: 78,
     fontWeight: '900',
-    marginVertical: 12
-  },
-  countdownMeta: {
-    color: '#38BDF8',
-    fontSize: 12,
-    fontWeight: '700',
-    fontFamily: 'monospace'
+    marginVertical: 10
   },
   countdownSub: {
-    color: '#94A3B8',
+    color: '#7DD3FC',
     fontSize: 12,
     marginTop: 4,
-    fontWeight: '600'
+    fontWeight: '800'
   }
 });

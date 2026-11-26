@@ -422,7 +422,7 @@ export class Room {
       }
       tracker.burstAllowance = refilledAllowance - heightDelta;
     } else {
-      // Downward falls (-20m wrong tap / crumble, -30m boulder / wind gust) are always valid
+      // Downward falls (-20m wrong tap / slippery ledge slide, -30m boulder hit) are always valid
       tracker.burstAllowance = refilledAllowance;
     }
 

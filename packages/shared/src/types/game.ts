@@ -14,9 +14,11 @@ export const GAME_CONSTANTS = {
   DEFAULT_TARGET_HEIGHT: 500,
   DEFAULT_GOAL_HEIGHT: 500,
   STEP_HEIGHT_METERS: 10,
+  LEFT_LANE_X: 0.25,
+  RIGHT_LANE_X: 0.75,
   FOOTHILLS_MAX_HEIGHT: 150,
   CLIFFS_MAX_HEIGHT: 350,
-  CRUMBLE_BREAK_MS: 700,
+  SLIP_LIMIT_MS: 750,
   MATCH_TIME_LIMIT_MS: 120000,
   MAX_STEP_HEIGHT_DELTA: 60,
   MAX_BURST_HEIGHT_DELTA: 80,
@@ -54,7 +56,7 @@ export type PlayerMoveAction =
 
 export type ObstacleType =
   | 'STATIC_LEDGE'
-  | 'CRUMBLING_ROCK'
+  | 'SLIPPERY_LEDGE'
   | 'FALLING_ROCK'
   | 'GUST_OF_WIND';
 
@@ -86,10 +88,10 @@ export interface ClimbStep {
   height: number; // index * 10 (0m .. targetHeight)
   y: number; // Synchronized with height
   requiredTap: TapDirection;
-  x: number; // Normalized horizontal position in [0.18, 0.82]
+  x: number; // Strict 2-lane normalized position: 0.25 (LEFT) or 0.75 (RIGHT), 0.50 at base step 0
   type: ObstacleType;
   biome: MountainBiome;
-  breakDelayMs?: number;
+  slipDurationMs?: number; // ~750ms grip timer for SLIPPERY_LEDGE
   cycleMs?: number;
   phaseOffsetMs?: number;
   warningDurationMs?: number;

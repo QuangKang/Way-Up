@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { LobbyView } from '../components/LobbyView';
 import { DeterministicObstaclesView } from '../components/DeterministicObstaclesView';
 import { OfflineRecordsView } from '../components/OfflineRecordsView';
 import { HapticsService } from '../haptics/hapticsService';
 
-type LobbyTab = 'LOBBY' | 'OBSTACLES' | 'OFFLINE_RECORDS';
+type LobbyTab = 'PLAY' | 'ROUTE_MAP' | 'RECORDS';
 
 export interface LobbyScreenProps {
   playerId: string;
@@ -22,73 +22,37 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   previewSeed = 424242,
   onJoinOrCreateRoom
 }) => {
-  const [activeTab, setActiveTab] = useState<LobbyTab>('LOBBY');
+  const [activeTab, setActiveTab] = useState<LobbyTab>('PLAY');
+
+  const tabs: ReadonlyArray<{ key: LobbyTab; label: string; icon: string }> = [
+    { key: 'PLAY', label: 'Play', icon: '▲' },
+    { key: 'ROUTE_MAP', label: 'Route Map', icon: '🗺' },
+    { key: 'RECORDS', label: 'Records', icon: '🏆' }
+  ];
 
   return (
     <View>
       <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'LOBBY' && styles.tabButtonActive
-          ]}
-          onPress={() => {
-            void HapticsService.selection();
-            setActiveTab('LOBBY');
-          }}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'LOBBY' && styles.tabTextActive
-            ]}
-          >
-            Lobby
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'OBSTACLES' && styles.tabButtonActive
-          ]}
-          onPress={() => {
-            void HapticsService.selection();
-            setActiveTab('OBSTACLES');
-          }}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'OBSTACLES' && styles.tabTextActive
-            ]}
-          >
-            PRNG Obstacles
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'OFFLINE_RECORDS' && styles.tabButtonActive
-          ]}
-          onPress={() => {
-            void HapticsService.selection();
-            setActiveTab('OFFLINE_RECORDS');
-          }}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'OFFLINE_RECORDS' && styles.tabTextActive
-            ]}
-          >
-            SQLite Scores
-          </Text>
-        </TouchableOpacity>
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <Pressable
+              key={tab.key}
+              style={[styles.tabButton, isActive && styles.tabButtonActive]}
+              onPress={() => {
+                void HapticsService.selection();
+                setActiveTab(tab.key);
+              }}
+            >
+              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                {tab.icon} {tab.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      {activeTab === 'LOBBY' && (
+      {activeTab === 'PLAY' && (
         <LobbyView
           isConnecting={isConnecting}
           isConnected={isConnected}
@@ -96,13 +60,11 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
         />
       )}
 
-      {activeTab === 'OBSTACLES' && (
+      {activeTab === 'ROUTE_MAP' && (
         <DeterministicObstaclesView initialSeed={previewSeed} />
       )}
 
-      {activeTab === 'OFFLINE_RECORDS' && (
-        <OfflineRecordsView playerId={playerId} />
-      )}
+      {activeTab === 'RECORDS' && <OfflineRecordsView playerId={playerId} />}
     </View>
   );
 };
@@ -110,28 +72,33 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#1E293B',
-    borderRadius: 10,
+    backgroundColor: '#0E192B',
+    borderRadius: 14,
     padding: 4,
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#233654',
+    gap: 4
   },
   tabButton: {
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
-    borderRadius: 8
+    justifyContent: 'center',
+    borderRadius: 10
   },
   tabButtonActive: {
-    backgroundColor: '#3B82F6'
+    backgroundColor: '#1E3A5F',
+    borderWidth: 1,
+    borderColor: '#38BDF8'
   },
   tabText: {
     color: '#94A3B8',
     fontSize: 12,
-    fontWeight: '700'
+    fontWeight: '800',
+    letterSpacing: 0.2
   },
   tabTextActive: {
-    color: '#FFFFFF'
+    color: '#F8FAFC'
   }
 });

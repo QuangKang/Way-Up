@@ -124,26 +124,27 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
   const winner = rankings[0];
   const isSelfWinner = winner?.playerId === playerId;
+  const seedShort = activeSeed.toString(16).toUpperCase().padStart(8, '0');
 
   return (
     <View style={styles.card}>
+      {/* Summit Podium Banner */}
       <View style={styles.banner}>
+        <View style={styles.bannerPeakBg} />
         <Text style={styles.kicker}>
-          FINAL STANDINGS • ROOM {roomState.code}
+          EXPEDITION COMPLETE • ROOM {roomState.code}
         </Text>
         <Text style={styles.headline}>
           {isSelfWinner
             ? '🏆 SUMMIT CHAMPION!'
             : winner
-            ? `🏆 ${winner.nickname} Reached the Summit!`
-            : 'Match Complete'}
+            ? `🏆 ${winner.nickname} Conquered the Peak!`
+            : 'Ascent Complete'}
         </Text>
         <View style={styles.metaBadgeRow}>
-          <Text style={styles.seedPill}>
-            Seed 0x{activeSeed.toString(16).toUpperCase()}
-          </Text>
+          <Text style={styles.seedPill}>Route #{seedShort.slice(0, 6)}</Text>
           {savedToSqlite && (
-            <Text style={styles.savedPill}>✓ Saved to SQLite</Text>
+            <Text style={styles.savedPill}>✓ Logbook Saved</Text>
           )}
         </View>
       </View>
@@ -156,7 +157,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
           const resultPrimary = finished
             ? `${(entry.finishTimeMs! / 1000).toFixed(2)}s`
             : `${Math.round(entry.height)}m`;
-          const resultCaption = finished ? 'FINISH TIME' : 'MAX HEIGHT';
+          const resultCaption = finished ? 'SUMMIT TIME' : 'MAX ALTITUDE';
 
           return (
             <View
@@ -182,7 +183,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               </View>
 
               <View
-                style={[styles.colorDot, { backgroundColor: entry.color }]}
+                style={[styles.helmetDot, { backgroundColor: entry.color }]}
               />
 
               <View style={styles.playerCol}>
@@ -225,7 +226,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onRematch();
           }}
         >
-          <Text style={styles.rematchText}>Play Again (Rematch)</Text>
+          <Text style={styles.rematchText}>▲ Climb Again (Rematch)</Text>
         </Pressable>
 
         <Pressable
@@ -247,24 +248,37 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
+    backgroundColor: '#132036',
+    borderRadius: 18,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#263B59'
   },
   banner: {
     alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155'
+    marginBottom: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#0B1424',
+    borderWidth: 1,
+    borderColor: '#294266',
+    overflow: 'hidden'
+  },
+  bannerPeakBg: {
+    position: 'absolute',
+    bottom: -46,
+    width: 120,
+    height: 120,
+    backgroundColor: '#162844',
+    transform: [{ rotate: '45deg' }],
+    opacity: 0.55
   },
   kicker: {
     color: '#FBBF24',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.4
   },
   headline: {
     color: '#F8FAFC',
@@ -280,16 +294,15 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   seedPill: {
-    backgroundColor: '#0F172A',
-    color: '#94A3B8',
+    backgroundColor: '#13223A',
+    color: '#7DD3FC',
     fontSize: 11,
-    fontWeight: '700',
-    fontFamily: 'monospace',
+    fontWeight: '800',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#334155'
+    borderColor: '#294266'
   },
   savedPill: {
     backgroundColor: '#064E3B',
@@ -302,16 +315,16 @@ const styles = StyleSheet.create({
   },
   podiumList: {
     gap: 10,
-    marginBottom: 22
+    marginBottom: 20
   },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B1424',
     padding: 12,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#1E293B'
+    borderColor: '#1B2B44'
   },
   rankRowSelf: {
     borderColor: '#38BDF8',
@@ -321,7 +334,7 @@ const styles = StyleSheet.create({
     minWidth: 44,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#334155',
+    backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
@@ -344,11 +357,13 @@ const styles = StyleSheet.create({
   rankDarkText: {
     color: '#0F172A'
   },
-  colorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 10
+  helmetDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.3)'
   },
   playerCol: {
     flex: 1,
@@ -402,21 +417,24 @@ const styles = StyleSheet.create({
     gap: 10
   },
   rematchBtn: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#059669',
     paddingVertical: 15,
-    borderRadius: 12,
-    alignItems: 'center'
+    borderRadius: 13,
+    alignItems: 'center',
+    borderBottomWidth: 4,
+    borderBottomColor: '#065F46'
   },
   rematchBtnPressed: {
-    backgroundColor: '#059669'
+    transform: [{ translateY: 2 }],
+    borderBottomWidth: 2
   },
   rematchText: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '800'
+    fontWeight: '900'
   },
   leaveBtn: {
-    paddingVertical: 14,
+    paddingVertical: 13,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EF4444',
@@ -426,7 +444,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239, 68, 68, 0.12)'
   },
   leaveText: {
-    color: '#EF4444',
+    color: '#F87171',
     fontSize: 14,
     fontWeight: '800'
   }
