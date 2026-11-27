@@ -14,6 +14,7 @@
     "dev:server": "npm run dev --workspace=@climb/server",
     "dev:mobile": "npm run start --workspace=@climb/mobile",
     "typecheck": "npm run typecheck --workspace=@climb/shared && npm run typecheck --workspace=@climb/server && npm run typecheck --workspace=@climb/mobile",
+    "test": "npm run test --workspace=@climb/shared && npm run test --workspace=@climb/server",
     "clean": "node -e \"const fs = require('fs'); ['packages/shared/dist', 'apps/server/dist', 'apps/mobile/.expo'].forEach(p => fs.rmSync(p, { recursive: true, force: true }))\""
   },
   "keywords": [

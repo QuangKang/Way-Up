@@ -243,10 +243,13 @@ export function generateMountainSteps(
       const roll = prng.next();
       const forceAtLeastOneWind =
         summitWindCount === 0 && i === totalSteps - 3;
+      // A boulder would turn the previous step into a safe anchor; never overwrite a wind gust,
+      // otherwise the summit can end up with zero gusts (no blizzard) and stale hazard fields.
       const canSpawnBoulder =
         stepsSinceRockfall >= MIN_ROCKFALL_SPACING &&
         rockfallCount < MAX_ROCKFALL_ZONES &&
-        i < totalSteps - 2;
+        i < totalSteps - 2 &&
+        prevStep.type !== 'GUST_OF_WIND';
 
       if (forceAtLeastOneWind || (roll < 0.22 && prevStep.type !== 'GUST_OF_WIND')) {
         type = 'GUST_OF_WIND';
