@@ -144,12 +144,30 @@ EXPO_PUBLIC_SERVER_URL=http://<YOUR_LAN_IP>:3001
 
 Open two separate terminals:
 
+### Quick Start (two terminals, from the project root)
+
+```bash
+# Terminal 1: game server on port 3001
+npm run dev:server
+
+# Terminal 2: Expo for a physical phone (replace with your LAN IP: `ipconfig getifaddr en0` on macOS)
+cd apps/mobile
+EXPO_PUBLIC_SERVER_URL=http://<YOUR_LAN_IP>:3001 npx expo start --lan
+```
+
+Then open Expo Go on a phone on the same Wi-Fi and scan the QR code (or enter `exp://<YOUR_LAN_IP>:8081`). Passing `EXPO_PUBLIC_SERVER_URL` inline works without a `.env` file; the detailed steps below use `.env` instead.
+
 ### Terminal 1: Backend WebSocket Server
 From the project root:
 ```bash
-npm run dev --workspace=@climb/server
+npm run dev:server
 ```
 * Runs with `tsx watch` on port `3001`.
+* Production-style run (compiled JS on plain Node):
+  ```bash
+  npm run build
+  npm start --workspace=@climb/server
+  ```
 * Health check: [http://localhost:3001/health](http://localhost:3001/health)
 * Active rooms monitor: [http://localhost:3001/api/rooms](http://localhost:3001/api/rooms)
 
@@ -231,9 +249,10 @@ gitGraph
 
 | Command | Workspace | Description |
 | :--- | :--- | :--- |
-| `npm run dev --workspace=@climb/server` | `apps/server` | Runs backend with live-reloading (`tsx watch`). |
-| `npm run start --workspace=@climb/mobile` | `apps/mobile` | Starts Expo Metro bundler. |
+| `npm run dev:server` | Root | Shortcut for `npm run dev --workspace=@climb/server`: backend with live-reloading (`tsx watch`). |
+| `npm run dev:mobile` | Root | Shortcut for `npm run start --workspace=@climb/mobile`: starts Expo Metro (server URL defaults to `localhost:3001`). |
 | `npm run build` | Root | Compiles `@climb/shared` and `@climb/server` to `dist/`. |
+| `npm start --workspace=@climb/server` | `apps/server` | Runs the compiled server (`node dist/index.js`); run `npm run build` first. |
 | `npm run typecheck` | All | Runs `tsc --noEmit` across all 3 workspaces. |
 | `npm run clean` | Root | Purges build caches and compiled dist folders. |
 
