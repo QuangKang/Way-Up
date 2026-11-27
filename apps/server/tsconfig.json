@@ -1,8 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": "../..",
     "paths": {
       "@climb/shared": ["../../packages/shared/src"]
     }
